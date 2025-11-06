@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notes App - SSEM Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📝 Notes App</h1>
+            <p class="subtitle">Simple full-stack demo with Python + PostgreSQL</p>
+        </header>
+
+        <div class="status-bar">
+            <span id="status" class="status">Checking connection...</span>
+        </div>
+
+        <div class="add-note-section">
+            <h2>Create New Note</h2>
+            <form id="noteForm">
+                <input type="text" id="noteTitle" placeholder="Note Title" required>
+                <textarea id="noteContent" placeholder="Note Content" rows="4" required></textarea>
+                <button type="submit">Add Note</button>
+            </form>
+        </div>
+
+        <div class="notes-section">
+            <h2>All Notes</h2>
+            <div id="notesList" class="notes-list">
+                <p class="loading">Loading notes...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
