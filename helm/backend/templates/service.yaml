@@ -1,0 +1,27 @@
+# service.yaml - Defines how to access the backend application
+# A Service provides a stable endpoint for accessing pods
+
+apiVersion: v1
+kind: Service
+metadata:
+  # Name of the service
+  name: {{ include "backend.fullname" . }}
+  labels:
+    {{- include "backend.labels" . | nindent 4 }}
+spec:
+  # Service type (ClusterIP, NodePort, or LoadBalancer)
+  # ClusterIP: Only accessible within the cluster (default)
+  # NodePort: Accessible via node IP and port (good for dev)
+  # LoadBalancer: Creates external load balancer (for production)
+  type: {{ .Values.service.type }}
+
+  # Ports configuration
+  ports:
+    - port: {{ .Values.service.port }}       # Port where service is exposed
+      targetPort: http                        # Port on the container
+      protocol: TCP
+      name: http
+
+  # Selector - routes traffic to pods with matching labels
+  selector:
+    {{- include "backend.selectorLabels" . | nindent 4 }}

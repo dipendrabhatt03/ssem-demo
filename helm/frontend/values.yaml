@@ -1,0 +1,133 @@
+# values.yaml - Default configuration values for the frontend chart
+# These values can be overridden during installation or upgrade
+
+# Number of frontend pod replicas
+# For dev environment, 1 is sufficient. For production, increase for high availability
+replicaCount: 1
+
+# Docker image configuration
+image:
+  # Repository where your frontend image is stored
+  # Example: gcr.io/your-project/ssem-frontend or docker.io/youruser/ssem-frontend
+  repository: ssem-frontend
+
+  # Image pull policy
+  # - IfNotPresent: Pull only if image doesn't exist locally (good for dev)
+  # - Always: Always pull the latest image (good for production with specific tags)
+  pullPolicy: IfNotPresent
+
+  # Image tag - defaults to chart appVersion if not specified
+  tag: "latest"
+
+# Image pull secrets (if using private registry)
+# Uncomment and configure if your images are in a private registry
+# imagePullSecrets:
+#   - name: regcred
+
+# Service account configuration
+serviceAccount:
+  # Whether to create a service account
+  create: false
+  # Name of the service account to use
+  name: ""
+
+# Kubernetes service configuration
+service:
+  # Service type:
+  # - ClusterIP: Only accessible within the cluster
+  # - NodePort: Accessible via node IP and port (good for dev/testing)
+  # - LoadBalancer: Creates external load balancer (use for production)
+  type: NodePort
+
+  # Port where the frontend service listens
+  port: 3000
+
+  # Target port on the container (should match your frontend app port)
+  targetPort: 3000
+
+  # NodePort (optional) - specific port on the node (30000-32767)
+  # If not specified, Kubernetes will assign a random port
+  # nodePort: 30080
+
+# Environment variables for the frontend application
+env:
+  # Backend API URL
+  # This should point to the backend service
+  # Format: http://<backend-service-name>:<backend-service-port>
+  BACKEND_URL: "http://backend:8000"
+
+  # Additional environment variables can be added here
+  # Example:
+  # API_TIMEOUT: "30"
+  # ENABLE_ANALYTICS: "false"
+
+# Resource limits and requests
+# Helps Kubernetes schedule pods efficiently and prevents resource exhaustion
+resources:
+  # Limits: Maximum resources the pod can use
+  limits:
+    cpu: 200m      # 200 millicores (0.2 CPU)
+    memory: 256Mi  # 256 Megabytes
+
+  # Requests: Minimum resources guaranteed to the pod
+  requests:
+    cpu: 100m      # 100 millicores (0.1 CPU)
+    memory: 128Mi  # 128 Megabytes
+
+# Liveness probe - checks if container is alive
+# Kubernetes restarts the container if this fails
+livenessProbe:
+  httpGet:
+    path: /          # Root path (adjust if you have a specific health endpoint)
+    port: 3000
+  initialDelaySeconds: 30  # Wait 30s before first check
+  periodSeconds: 10        # Check every 10s
+  timeoutSeconds: 5        # Timeout after 5s
+  failureThreshold: 3      # Restart after 3 failures
+
+# Readiness probe - checks if container is ready to serve traffic
+# Kubernetes removes pod from service if this fails
+readinessProbe:
+  httpGet:
+    path: /
+    port: 3000
+  initialDelaySeconds: 10  # Wait 10s before first check
+  periodSeconds: 5         # Check every 5s
+  timeoutSeconds: 3        # Timeout after 3s
+  failureThreshold: 3      # Mark unready after 3 failures
+
+# Pod annotations (optional)
+# Add metadata to pods for monitoring, logging, etc.
+podAnnotations: {}
+  # Example:
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "3000"
+
+# Pod security context (optional)
+# Security settings for the pod
+podSecurityContext: {}
+  # fsGroup: 2000
+
+# Container security context (optional)
+# Security settings for the container
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Node selector (optional)
+# Schedule pods on specific nodes
+nodeSelector: {}
+  # Example:
+  # disktype: ssd
+
+# Tolerations (optional)
+# Allow pods to schedule on nodes with matching taints
+tolerations: []
+
+# Affinity (optional)
+# Advanced pod scheduling rules
+affinity: {}

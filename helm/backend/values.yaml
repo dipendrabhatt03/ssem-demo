@@ -1,0 +1,143 @@
+# values.yaml - Default configuration values for the backend chart
+# These values can be overridden during installation or upgrade
+
+# Number of backend pod replicas
+# For dev environment, 1 is sufficient. For production, increase this for high availability
+replicaCount: 1
+
+# Docker image configuration
+image:
+  # Repository where your backend image is stored
+  # Example: gcr.io/your-project/ssem-backend or docker.io/youruser/ssem-backend
+  repository: ssem-backend
+
+  # Image pull policy
+  # - IfNotPresent: Pull only if image doesn't exist locally (good for dev)
+  # - Always: Always pull the latest image (good for production with specific tags)
+  pullPolicy: IfNotPresent
+
+  # Image tag - defaults to chart appVersion if not specified
+  tag: "latest"
+
+# Image pull secrets (if using private registry)
+# Uncomment and configure if your images are in a private registry
+# imagePullSecrets:
+#   - name: regcred
+
+# Service account configuration
+serviceAccount:
+  # Whether to create a service account
+  create: false
+  # Name of the service account to use
+  name: ""
+
+# Kubernetes service configuration
+service:
+  # Service type:
+  # - ClusterIP: Only accessible within the cluster (default, most secure)
+  # - NodePort: Accessible via node IP and port (good for dev)
+  # - LoadBalancer: Creates external load balancer (use for production)
+  type: ClusterIP
+
+  # Port where the backend service listens
+  port: 8000
+
+  # Target port on the container (should match your backend app port)
+  targetPort: 8000
+
+# Environment variables for the backend application
+# These are injected into the container
+env:
+  # Database connection settings
+  # NOTE: DB_HOST should point to the PostgreSQL service name
+  DB_HOST: "postgres-service"
+  DB_PORT: "5432"
+  DB_NAME: "notesdb"
+  DB_USER: "postgres"
+
+  # Additional environment variables can be added here
+  # Example:
+  # LOG_LEVEL: "info"
+  # API_TIMEOUT: "30"
+
+# Secrets - sensitive values (passwords, keys, etc.)
+# These are stored as Kubernetes secrets
+secrets:
+  # Database password
+  # In production, use a strong password and manage via secret management tools
+  DB_PASSWORD: "postgres"
+
+  # Add other secrets as needed
+  # Example:
+  # API_KEY: "your-secret-api-key"
+
+# Resource limits and requests
+# Helps Kubernetes schedule pods efficiently and prevents resource exhaustion
+resources:
+  # Limits: Maximum resources the pod can use
+  limits:
+    cpu: 500m      # 500 millicores (0.5 CPU)
+    memory: 512Mi  # 512 Megabytes
+
+  # Requests: Minimum resources guaranteed to the pod
+  requests:
+    cpu: 250m      # 250 millicores (0.25 CPU)
+    memory: 256Mi  # 256 Megabytes
+
+# Liveness probe - checks if container is alive
+# Kubernetes restarts the container if this fails
+livenessProbe:
+  httpGet:
+    path: /health      # Health check endpoint
+    port: 8000
+  initialDelaySeconds: 30  # Wait 30s before first check
+  periodSeconds: 10        # Check every 10s
+  timeoutSeconds: 5        # Timeout after 5s
+  failureThreshold: 3      # Restart after 3 failures
+
+# Readiness probe - checks if container is ready to serve traffic
+# Kubernetes removes pod from service if this fails
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+  initialDelaySeconds: 10  # Wait 10s before first check
+  periodSeconds: 5         # Check every 5s
+  timeoutSeconds: 3        # Timeout after 3s
+  failureThreshold: 3      # Mark unready after 3 failures
+
+# Pod annotations (optional)
+# Add metadata to pods for monitoring, logging, etc.
+podAnnotations: {}
+  # Example:
+  # prometheus.io/scrape: "true"
+  # prometheus.io/port: "8000"
+
+# Pod security context (optional)
+# Security settings for the pod
+podSecurityContext: {}
+  # fsGroup: 2000
+
+# Container security context (optional)
+# Security settings for the container
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# Node selector (optional)
+# Schedule pods on specific nodes
+nodeSelector: {}
+  # Example:
+  # disktype: ssd
+
+# Tolerations (optional)
+# Allow pods to schedule on nodes with matching taints
+tolerations: []
+
+# Affinity (optional)
+# Advanced pod scheduling rules
+affinity: {}

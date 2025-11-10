@@ -1,0 +1,18 @@
+# Chart.yaml - Metadata for the backend Helm chart
+# This file defines the chart name, version, and description
+
+apiVersion: v2
+name: backend
+description: A Helm chart for deploying the FastAPI backend service
+type: application
+
+# This is the chart version. Update this each time you make changes to the chart
+version: 0.1.0
+
+# This is the version of the application being deployed
+appVersion: "1.0.0"
+
+# Maintainer information (optional)
+maintainers:
+  - name: SSEM Demo Team
+    email: team@example.com
