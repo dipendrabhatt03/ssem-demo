@@ -19,6 +19,16 @@ variable "gcp_region" {
 }
 
 # ==============================================================================
+# HARNESS CONFIGURATION
+# ==============================================================================
+
+variable "harness_platform_api_key" {
+  description = "Harness platform API key for managing Harness resources via Terraform"
+  type        = string
+  sensitive   = true
+}
+
+# ==============================================================================
 # GKE CLUSTER CONFIGURATION
 # ==============================================================================
 

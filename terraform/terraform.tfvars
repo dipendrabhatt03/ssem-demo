@@ -1,17 +1,4 @@
-# terraform.tfvars.example - Example configuration file
-# Copy this file to terraform.tfvars and customize for your environment
-#
-# Usage:
-#   cp terraform.tfvars.example terraform.tfvars
-#   # Edit terraform.tfvars with your values
-#   tofu apply
 
-# ==============================================================================
-# KUBERNETES CLUSTER
-# ==============================================================================
-
-# Leave empty to use current kubectl context, or specify a specific context
-# Run 'kubectl config get-contexts' to see available contexts
 gcp_project_id="idp-play"
 gcp_region="us-west1"
 gke_cluster_endpoint = "34.83.148.135"
@@ -57,34 +44,9 @@ postgres_version      = "15-alpine"
 postgres_db           = "notesdb"
 postgres_user         = "postgres"
 postgres_password     = "postgres"  # CHANGE THIS IN PRODUCTION!
-postgres_storage_size = "10Gi"
 
 # Resource limits
 postgres_cpu_limit      = "1000m"
 postgres_memory_limit   = "1Gi"
 postgres_cpu_request    = "500m"
 postgres_memory_request = "512Mi"
-
-# ==============================================================================
-# BACKEND
-# ==============================================================================
-
-# Docker image (update with your registry path)
-# Examples:
-#   - Docker Hub: "yourusername/ssem-backend"
-#   - GCR: "gcr.io/your-project-id/ssem-backend"
-#   - Artifact Registry: "us-docker.pkg.dev/your-project-id/your-repo/ssem-backend"
-backend_image_repository = "deepsea030897/ssem-demo"
-backend_image_tag        = "latest"
-backend_replicas         = 1
-backend_service_type     = "ClusterIP"
-
-# ==============================================================================
-# FRONTEND
-# ==============================================================================
-
-# Docker image (update with your registry path)
-frontend_image_repository = "deepsea030897/ssem-demo"
-frontend_image_tag        = "latest"
-frontend_replicas         = 1
-frontend_service_type     = "NodePort"  # Use NodePort for easy local access

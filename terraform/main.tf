@@ -12,8 +12,13 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
+    harness = {
+      source  = "harness/harness"
+      version = "~> 0.38.8"
+    }
   }
 }
+
 # ==============================================================================
 # PROVIDER CONFIGURATION
 # ==============================================================================
@@ -45,6 +50,18 @@ locals {
   # Cluster CA certificate (base64 decoded)
   # This certificate validates the cluster's identity
   cluster_ca_certificate = var.gke_cluster_ca_certificate
+}
+
+# ==============================================================================
+# HARNESS PROVIDER
+# ==============================================================================
+
+# Harness Provider Configuration
+# This allows managing Harness resources (services, environments, etc.) via Terraform
+provider "harness" {
+  endpoint         = "https://munklinde96.pr2.harness.io/gateway"
+  account_id       = "IyrWsOn4RhGDDIDtYxz7YA"
+  platform_api_key = var.harness_platform_api_key
 }
 
 # ==============================================================================
