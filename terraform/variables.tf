@@ -18,6 +18,13 @@ variable "gcp_region" {
   # Common regions: us-west1, us-central1, us-east1, europe-west1, asia-southeast1
 }
 
+variable "harness_platform_api_key" {
+  type = string
+  sensitive = true
+  description = "The platform API key for the Harness account"
+  # Common regions: us-west1, us-central1, us-east1, europe-west1, asia-southeast1
+}
+
 # ==============================================================================
 # GKE CLUSTER CONFIGURATION
 # ==============================================================================

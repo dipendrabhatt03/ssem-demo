@@ -24,5 +24,9 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.11"  # Use version 2.11.x
     }
+    harness = {
+      source = "harness/harness"
+      version = "~> 0.38.8"
+    }
   }
 }

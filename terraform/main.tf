@@ -34,6 +34,12 @@ locals {
   cluster_ca_certificate = var.gke_cluster_ca_certificate
 }
 
+provider "harness" {
+  endpoint         = "https://munklinde96.pr2.harness.io/gateway"
+  account_id       = "IyrWsOn4RhGDDIDtYxz7YA"
+  platform_api_key = var.harness_platform_api_key
+}
+
 # ==============================================================================
 # KUBERNETES PROVIDER
 # ==============================================================================

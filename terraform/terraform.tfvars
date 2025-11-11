@@ -42,7 +42,6 @@ BrjKrTmYihn/WEAm/2dz/3r/WD53EgJSjZpNJf3HLnXTyshSt2dSumNFa/1Ut4f/
 vxW9RelYZfQXuljAudXxAV8=
 -----END CERTIFICATE-----
 EOT
-
 # ==============================================================================
 # NAMESPACE & ENVIRONMENT
 # ==============================================================================
