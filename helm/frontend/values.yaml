@@ -17,7 +17,7 @@ image:
   pullPolicy: IfNotPresent
 
   # Image tag - defaults to chart appVersion if not specified
-  tag: "latest"
+  tag: "main"
 
 # Image pull secrets (if using private registry)
 # Uncomment and configure if your images are in a private registry
