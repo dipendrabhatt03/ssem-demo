@@ -1,0 +1,29 @@
+# .helmignore - Files to ignore when packaging the Helm chart
+# Similar to .gitignore but for Helm
+
+# Version control
+.git/
+.gitignore
+
+# CI/CD
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation
+*.md
+OWNERS
+
+# Development files
+.DS_Store
+.vscode/
+.idea/
+
+# Temporary files
+*.swp
+*.bak
+*.tmp
+*~
+
+# Chart dependencies (will be rebuilt)
+charts/*.tgz
+requirements.lock
