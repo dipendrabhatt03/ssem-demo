@@ -109,11 +109,7 @@ variable "postgres_password" {
   default     = "postgres"
 }
 
-variable "postgres_storage_size" {
-  description = "Size of persistent volume for PostgreSQL data"
-  type        = string
-  default     = "10Gi"  # 10 Gigabytes
-}
+# Note: postgres_storage_size removed - no longer using persistent volumes for demo setup
 
 variable "postgres_cpu_limit" {
   description = "CPU limit for PostgreSQL container"

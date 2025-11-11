@@ -1,39 +1,7 @@
 # postgres.tf - PostgreSQL database resources
-# This file creates a PostgreSQL deployment with persistent storage
-
-# ==============================================================================
-# POSTGRESQL PERSISTENT VOLUME CLAIM
-# ==============================================================================
-
-# PersistentVolumeClaim requests storage for the PostgreSQL database
-# Data persists even if the pod is deleted or recreated
-resource "kubernetes_persistent_volume_claim" "postgres_pvc" {
-  metadata {
-    name      = "postgres-pvc"
-    namespace = kubernetes_namespace.app_namespace.metadata[0].name
-
-    labels = {
-      app        = "postgres"
-
-    }
-  }
-
-  spec {
-    # Access mode - ReadWriteOnce means one pod can mount it for read/write
-    access_modes = ["ReadWriteOnce"]
-
-    # Storage class (uses cluster default if not specified)
-    # For GKE, this typically provisions a persistent disk
-    # storage_class_name = "standard"  # Uncomment to specify storage class
-
-    resources {
-      requests = {
-        # Size of the persistent volume
-        storage = var.postgres_storage_size
-      }
-    }
-  }
-}
+# This file creates a simple PostgreSQL deployment without persistent storage
+# WARNING: Data will be lost when the pod is deleted or restarted
+# This is suitable for demo/dev environments only
 
 # ==============================================================================
 # POSTGRESQL SECRET
@@ -67,7 +35,8 @@ resource "kubernetes_secret" "postgres_secret" {
 # ==============================================================================
 
 # Deployment for PostgreSQL database
-# This creates a single PostgreSQL pod with persistent storage
+# This creates a single PostgreSQL pod without persistent storage (stateless)
+# Data will be lost on pod restart - suitable for demo/dev only
 resource "kubernetes_deployment" "postgres" {
   metadata {
     name      = "postgres"
@@ -116,14 +85,6 @@ resource "kubernetes_deployment" "postgres" {
             }
           }
 
-          # Volume mount for persistent storage
-          volume_mount {
-            name       = "postgres-storage"
-            mount_path = "/var/lib/postgresql/data"
-            # PostgreSQL requires a subdirectory for data
-            sub_path = "postgres"
-          }
-
           # Resource limits and requests
           resources {
             limits = {
@@ -156,14 +117,6 @@ resource "kubernetes_deployment" "postgres" {
             period_seconds        = 5
             timeout_seconds       = 3
             failure_threshold     = 3
-          }
-        }
-
-        # Volume definition
-        volume {
-          name = "postgres-storage"
-          persistent_volume_claim {
-            claim_name = kubernetes_persistent_volume_claim.postgres_pvc.metadata[0].name
           }
         }
       }
