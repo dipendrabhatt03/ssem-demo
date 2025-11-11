@@ -18,13 +18,6 @@ variable "gcp_region" {
   # Common regions: us-west1, us-central1, us-east1, europe-west1, asia-southeast1
 }
 
-variable "harness_platform_api_key" {
-  type = string
-  sensitive = true
-  description = "The platform API key for the Harness account"
-  # Common regions: us-west1, us-central1, us-east1, europe-west1, asia-southeast1
-}
-
 # ==============================================================================
 # GKE CLUSTER CONFIGURATION
 # ==============================================================================
@@ -133,70 +126,4 @@ variable "postgres_memory_request" {
   description = "Memory request for PostgreSQL container"
   type        = string
   default     = "512Mi"  # 512 Megabytes
-}
-
-# ==============================================================================
-# BACKEND CONFIGURATION
-# ==============================================================================
-
-variable "backend_image_repository" {
-  description = "Docker image repository for backend (e.g., gcr.io/project/backend or youruser/backend)"
-  type        = string
-  default     = "ssem-backend"
-}
-
-variable "backend_image_tag" {
-  description = "Docker image tag for backend"
-  type        = string
-  default     = "latest"
-}
-
-variable "backend_replicas" {
-  description = "Number of backend pod replicas"
-  type        = number
-  default     = 1
-}
-
-variable "backend_service_type" {
-  description = "Backend service type (ClusterIP, NodePort, LoadBalancer)"
-  type        = string
-  default     = "ClusterIP"
-
-  validation {
-    condition     = contains(["ClusterIP", "NodePort", "LoadBalancer"], var.backend_service_type)
-    error_message = "Service type must be one of: ClusterIP, NodePort, LoadBalancer"
-  }
-}
-
-# ==============================================================================
-# FRONTEND CONFIGURATION
-# ==============================================================================
-
-variable "frontend_image_repository" {
-  description = "Docker image repository for frontend (e.g., gcr.io/project/frontend or youruser/frontend)"
-  type        = string
-  default     = "ssem-frontend"
-}
-
-variable "frontend_image_tag" {
-  description = "Docker image tag for frontend"
-  type        = string
-  default     = "latest"
-}
-
-variable "frontend_replicas" {
-  description = "Number of frontend pod replicas"
-  type        = number
-  default     = 1
-}
-
-variable "frontend_service_type" {
-  description = "Frontend service type (ClusterIP, NodePort, LoadBalancer)"
-  type        = string
-  default     = "NodePort"  # NodePort for easy local access
-
-  validation {
-    condition     = contains(["ClusterIP", "NodePort", "LoadBalancer"], var.frontend_service_type)
-    error_message = "Service type must be one of: ClusterIP, NodePort, LoadBalancer"
-  }
 }

@@ -1,12 +1,12 @@
-# outputs.tf - Output values after deployment
-# These outputs display useful information after running 'tofu apply'
+# outputs.tf - Output values after infrastructure deployment
+# These outputs provide useful information for Harness CD deployments
 
 # ==============================================================================
 # NAMESPACE OUTPUTS
 # ==============================================================================
 
 output "namespace" {
-  description = "The namespace where resources are deployed"
+  description = "The namespace where infrastructure is deployed. Use this in Harness CD for deploying applications."
   value       = kubernetes_namespace.app_namespace.metadata[0].name
 }
 
@@ -15,97 +15,102 @@ output "namespace" {
 # ==============================================================================
 
 output "postgres_service_name" {
-  description = "PostgreSQL service name (for internal cluster access)"
+  description = "PostgreSQL service name for database connections"
   value       = kubernetes_service.postgres.metadata[0].name
 }
 
-output "postgres_connection_string" {
-  description = "PostgreSQL connection details (for reference)"
-  value       = "postgresql://${var.postgres_user}@${kubernetes_service.postgres.metadata[0].name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local:5432/${var.postgres_db}"
-  sensitive   = false  # Password not included
+output "postgres_service_host" {
+  description = "PostgreSQL service DNS hostname (use this as DB_HOST in your application)"
+  value       = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local"
+}
+
+output "postgres_port" {
+  description = "PostgreSQL service port"
+  value       = "5432"
+}
+
+output "postgres_database" {
+  description = "PostgreSQL database name"
+  value       = var.postgres_db
+}
+
+output "postgres_user" {
+  description = "PostgreSQL username"
+  value       = var.postgres_user
+  sensitive   = false
+}
+
+output "postgres_secret_name" {
+  description = "Kubernetes secret name containing PostgreSQL credentials. Mount this in your application pods."
+  value       = kubernetes_secret.postgres_secret.metadata[0].name
 }
 
 # ==============================================================================
-# BACKEND OUTPUTS
+# HARNESS CD CONFIGURATION VALUES
 # ==============================================================================
 
-output "backend_release_name" {
-  description = "Name of the backend Helm release"
-  value       = helm_release.backend.name
-}
+output "harness_cd_values" {
+  description = "Copy these values to your Harness CD pipeline for deploying backend/frontend"
+  value = {
+    namespace = kubernetes_namespace.app_namespace.metadata[0].name
 
-output "backend_service_url" {
-  description = "Backend service URL (internal cluster access)"
-  value       = "http://${helm_release.backend.name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local:8000"
-}
-
-output "backend_status" {
-  description = "Backend Helm release status"
-  value       = helm_release.backend.status
-}
-
-# ==============================================================================
-# FRONTEND OUTPUTS
-# ==============================================================================
-
-output "frontend_release_name" {
-  description = "Name of the frontend Helm release"
-  value       = helm_release.frontend.name
-}
-
-output "frontend_service_url" {
-  description = "Frontend service URL (internal cluster access)"
-  value       = "http://${helm_release.frontend.name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local:3000"
-}
-
-output "frontend_status" {
-  description = "Frontend Helm release status"
-  value       = helm_release.frontend.status
+    # Database connection values for backend deployment
+    database = {
+      host     = "${kubernetes_service.postgres.metadata[0].name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local"
+      port     = "5432"
+      name     = var.postgres_db
+      user     = var.postgres_user
+      secret   = kubernetes_secret.postgres_secret.metadata[0].name
+    }
+  }
 }
 
 # ==============================================================================
-# ACCESS INSTRUCTIONS
+# QUICK REFERENCE
 # ==============================================================================
 
-output "access_instructions" {
-  description = "Instructions for accessing the application"
+output "deployment_info" {
+  description = "Quick reference information for deploying applications via Harness CD"
   value = <<-EOT
 
     ============================================
-    SSEM Demo Application Deployed Successfully!
+    Infrastructure Deployed Successfully!
     ============================================
 
     Namespace: ${kubernetes_namespace.app_namespace.metadata[0].name}
 
-    To access your application:
+    PostgreSQL Connection Details:
+    - Service Name: ${kubernetes_service.postgres.metadata[0].name}
+    - Host: ${kubernetes_service.postgres.metadata[0].name}.${kubernetes_namespace.app_namespace.metadata[0].name}.svc.cluster.local
+    - Port: 5432
+    - Database: ${var.postgres_db}
+    - Username: ${var.postgres_user}
+    - Secret Name: ${kubernetes_secret.postgres_secret.metadata[0].name}
 
-    1. Check pod status:
-       kubectl get pods -n ${kubernetes_namespace.app_namespace.metadata[0].name}
+    ============================================
+    For Harness CD Deployments:
+    ============================================
 
-    2. Check services:
-       kubectl get services -n ${kubernetes_namespace.app_namespace.metadata[0].name}
+    Backend Environment Variables:
+    - DB_HOST: ${kubernetes_service.postgres.metadata[0].name}
+    - DB_PORT: 5432
+    - DB_NAME: ${var.postgres_db}
+    - DB_USER: ${var.postgres_user}
+    - DB_PASSWORD: (mount from secret: ${kubernetes_secret.postgres_secret.metadata[0].name})
 
-    3. Access Frontend (if NodePort):
-       a. Get the NodePort:
-          kubectl get service ${helm_release.frontend.name} -n ${kubernetes_namespace.app_namespace.metadata[0].name} -o jsonpath='{.spec.ports[0].nodePort}'
+    Or use the PostgreSQL secret directly:
+    - envFrom:
+        secretRef:
+          name: ${kubernetes_secret.postgres_secret.metadata[0].name}
 
-       b. Get a node IP:
-          kubectl get nodes -o wide
+    Deploy to namespace: ${kubernetes_namespace.app_namespace.metadata[0].name}
 
-       c. Access via: http://<NODE_IP>:<NODE_PORT>
+    ============================================
+    Verify Infrastructure:
+    ============================================
 
-    4. Access Frontend (using port-forward):
-       kubectl port-forward -n ${kubernetes_namespace.app_namespace.metadata[0].name} svc/${helm_release.frontend.name} 3000:3000
-       Then visit: http://localhost:3000
-
-    5. Access Backend API (using port-forward):
-       kubectl port-forward -n ${kubernetes_namespace.app_namespace.metadata[0].name} svc/${helm_release.backend.name} 8000:8000
-       Then visit: http://localhost:8000/docs
-
-    6. View logs:
-       Backend:  kubectl logs -n ${kubernetes_namespace.app_namespace.metadata[0].name} -l app.kubernetes.io/name=backend -f
-       Frontend: kubectl logs -n ${kubernetes_namespace.app_namespace.metadata[0].name} -l app.kubernetes.io/name=frontend -f
-       Postgres: kubectl logs -n ${kubernetes_namespace.app_namespace.metadata[0].name} -l app=postgres -f
+    kubectl get all -n ${kubernetes_namespace.app_namespace.metadata[0].name}
+    kubectl get secret ${kubernetes_secret.postgres_secret.metadata[0].name} -n ${kubernetes_namespace.app_namespace.metadata[0].name}
 
     ============================================
   EOT

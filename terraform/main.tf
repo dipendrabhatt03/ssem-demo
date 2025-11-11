@@ -1,22 +1,16 @@
-# main.tf - Main OpenTofu configuration file
-# This file sets up providers and creates the namespace
+# main.tf - Main Terraform configuration file
+# This file sets up providers and creates the namespace for infrastructure only
+# Applications (frontend/backend) are deployed via Harness CD
+
 terraform {
   required_providers {
-    helm = {
-      source  = "hashicorp/helm"
-      version = "2.17.0"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.6"
-    }
-    harness = {
-      source = "harness/harness"
-      version = "~> 0.38.8"
+      version = "~> 2.23"
     }
   }
 }
@@ -53,12 +47,6 @@ locals {
   cluster_ca_certificate = var.gke_cluster_ca_certificate
 }
 
-provider "harness" {
-  endpoint         = "https://munklinde96.pr2.harness.io/gateway"
-  account_id       = "IyrWsOn4RhGDDIDtYxz7YA"
-  platform_api_key = var.harness_platform_api_key
-}
-
 # ==============================================================================
 # KUBERNETES PROVIDER
 # ==============================================================================
@@ -74,20 +62,6 @@ provider "kubernetes" {
 
   # Cluster CA certificate for TLS verification
   cluster_ca_certificate = local.cluster_ca_certificate
-}
-
-# ==============================================================================
-# HELM PROVIDER
-# ==============================================================================
-
-# Helm Provider Configuration
-# Uses the same Google Cloud authentication as Kubernetes provider
-provider "helm" {
-  kubernetes {
-    host  = "https://${local.endpoint}"
-    token = data.google_client_config.default.access_token
-    cluster_ca_certificate = local.cluster_ca_certificate
-  }
 }
 
 # ==============================================================================

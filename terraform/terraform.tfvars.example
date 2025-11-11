@@ -1,0 +1,57 @@
+# terraform.tfvars.example - Example configuration for infrastructure deployment
+# Copy this file to terraform.tfvars and customize for your environment
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars with your values
+#   terraform apply
+
+# ==============================================================================
+# GOOGLE CLOUD & GKE CLUSTER
+# ==============================================================================
+
+# Your GCP project ID
+gcp_project_id = "your-gcp-project-id"
+
+# GCP region (where your resources are located)
+gcp_region = "us-west1"
+
+# GKE cluster endpoint (IP address, without https://)
+# Get this with: gcloud container clusters describe CLUSTER_NAME --region REGION --format='get(endpoint)'
+gke_cluster_endpoint = "34.83.148.135"
+
+# GKE cluster CA certificate (base64 encoded)
+# Get this with: gcloud container clusters describe CLUSTER_NAME --region REGION --format='get(masterAuth.clusterCaCertificate)'
+gke_cluster_ca_certificate = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t..."
+
+# ==============================================================================
+# NAMESPACE & ENVIRONMENT
+# ==============================================================================
+
+namespace   = "ssem-demo"
+environment = "dev"
+
+# ==============================================================================
+# POSTGRESQL CONFIGURATION
+# ==============================================================================
+
+postgres_version = "15-alpine"
+postgres_db      = "notesdb"
+postgres_user    = "postgres"
+postgres_password = "postgres"  # CHANGE THIS IN PRODUCTION!
+
+# PostgreSQL resource limits
+postgres_cpu_limit      = "1000m"
+postgres_memory_limit   = "1Gi"
+postgres_cpu_request    = "500m"
+postgres_memory_request = "512Mi"
+
+# ==============================================================================
+# NOTE: Application Deployment
+# ==============================================================================
+
+# Backend and Frontend are deployed via Harness CD, not Terraform
+# After running 'terraform apply', use the outputs to configure your Harness CD pipelines:
+#   - namespace: Where to deploy your applications
+#   - postgres_service_name: Database host for backend connection
+#   - postgres_secret_name: Secret to mount for database credentials
