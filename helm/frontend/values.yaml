@@ -9,7 +9,7 @@ replicaCount: 1
 image:
   # Repository where your frontend image is stored
   # Example: gcr.io/your-project/ssem-frontend or docker.io/youruser/ssem-frontend
-  repository: ssem-demo
+  repository: deepsea030897/ssem-demo
 
   # Image pull policy
   # - IfNotPresent: Pull only if image doesn't exist locally (good for dev)
