@@ -80,7 +80,6 @@ resource "kubernetes_namespace" "app_namespace" {
     labels = {
       name        = var.namespace
       environment = var.environment
-      managed-by  = "opentofu"
     }
   }
 }

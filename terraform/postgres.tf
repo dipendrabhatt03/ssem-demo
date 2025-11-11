@@ -14,7 +14,7 @@ resource "kubernetes_persistent_volume_claim" "postgres_pvc" {
 
     labels = {
       app        = "postgres"
-      managed-by = "opentofu"
+
     }
   }
 
@@ -48,7 +48,7 @@ resource "kubernetes_secret" "postgres_secret" {
 
     labels = {
       app        = "postgres"
-      managed-by = "opentofu"
+
     }
   }
 
@@ -75,7 +75,7 @@ resource "kubernetes_deployment" "postgres" {
 
     labels = {
       app        = "postgres"
-      managed-by = "opentofu"
+
     }
   }
 
@@ -187,7 +187,7 @@ resource "kubernetes_service" "postgres" {
 
     labels = {
       app        = "postgres"
-      managed-by = "opentofu"
+
     }
   }
 
