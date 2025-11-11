@@ -16,6 +16,10 @@ terraform {
       source  = "harness/harness"
       version = "~> 0.38.8"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"  # Use version 2.11.x
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 
 gcp_project_id="idp-play"
 gcp_region="us-west1"
-gke_cluster_endpoint = "34.83.148.135"
+gke_cluster_endpoint = "34.82.26.185"
 gke_cluster_ca_certificate = <<EOT
 -----BEGIN CERTIFICATE-----
 MIIELTCCApWgAwIBAgIRAMa7Ic37hNutgJacSB7/ETgwDQYJKoZIhvcNAQELBQAw
