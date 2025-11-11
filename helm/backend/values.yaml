@@ -14,7 +14,7 @@ image:
   # Image pull policy
   # - IfNotPresent: Pull only if image doesn't exist locally (good for dev)
   # - Always: Always pull the latest image (good for production with specific tags)
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
   # Image tag - defaults to chart appVersion if not specified
   tag: "latest"
