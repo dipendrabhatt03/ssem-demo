@@ -54,6 +54,9 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
 
+          # Command to run the frontend HTTP server
+          command: ["python3", "-m", "http.server", "3000", "--directory", "/app/frontend"]
+
           # Ports exposed by the container
           ports:
             - name: http
