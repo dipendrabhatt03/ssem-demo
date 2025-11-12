@@ -17,7 +17,7 @@ image:
   pullPolicy: Always
 
   # Image tag - defaults to chart appVersion if not specified
-  tag: "main"
+  tag: "main2"
 
 # Image pull secrets (if using private registry)
 # Uncomment and configure if your images are in a private registry
