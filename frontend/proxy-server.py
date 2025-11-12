@@ -73,7 +73,7 @@ class ProxyHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(500, f'Proxy error: {str(e)}')
 
 if __name__ == '__main__':
-    os.chdir('/app/frontend')
+    os.chdir('frontend')
     with socketserver.TCPServer(('', PORT), ProxyHTTPRequestHandler) as httpd:
         print(f'Serving on port {PORT}, proxying /api/* to {BACKEND_URL}')
         httpd.serve_forever()
