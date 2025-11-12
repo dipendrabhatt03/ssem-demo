@@ -50,8 +50,10 @@ service:
   # nodePort: 30080
 
 # Environment variables for the frontend application
-# Note: API URL is hardcoded in frontend/app.js as http://backend:8000
-env: {}
+env:
+  # Backend URL for proxy server to forward API requests
+  BACKEND_URL: "http://backend:8000"
+
   # Additional environment variables can be added here
   # Example:
   # API_TIMEOUT: "30"

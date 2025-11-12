@@ -1,5 +1,5 @@
-// API Configuration - Backend Kubernetes service
-const API_URL = 'http://backend:8000';
+// API Configuration - Use relative path (proxied by frontend server)
+const API_URL = '/api';
 
 // DOM Elements
 const noteForm = document.getElementById('noteForm');
