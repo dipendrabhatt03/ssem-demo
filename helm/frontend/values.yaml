@@ -50,12 +50,8 @@ service:
   # nodePort: 30080
 
 # Environment variables for the frontend application
-env:
-  # Backend API URL
-  # This should point to the backend service
-  # Format: http://<backend-service-name>:<backend-service-port>
-  BACKEND_URL: "http://backend:8000"
-
+# Note: API URL is hardcoded in frontend/app.js as http://backend:8000
+env: {}
   # Additional environment variables can be added here
   # Example:
   # API_TIMEOUT: "30"

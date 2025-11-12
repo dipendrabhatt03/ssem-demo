@@ -1,5 +1,5 @@
-// API Configuration
-const API_URL = 'http://localhost:8000';
+// API Configuration - Backend Kubernetes service
+const API_URL = 'http://backend:8000';
 
 // DOM Elements
 const noteForm = document.getElementById('noteForm');
