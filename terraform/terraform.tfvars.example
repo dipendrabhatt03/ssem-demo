@@ -28,7 +28,7 @@ gke_cluster_ca_certificate = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t..."
 # NAMESPACE & ENVIRONMENT
 # ==============================================================================
 
-namespace   = "ssem-demo"
+
 environment = "dev"
 
 # ==============================================================================
