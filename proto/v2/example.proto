@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package example.v2;
+
+option go_package = "github.com/example/protobuf-compat/proto/v2;v2";
+
+import "google/protobuf/timestamp.proto";
+
+message InfrastructureExecution {
+  string execution_id = 1;
+  string infrastructure_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  google.protobuf.Timestamp stopped_at = 4;
+  repeated string instance_ids = 5;
+  string message = 6;  // New field added in v2
+}
