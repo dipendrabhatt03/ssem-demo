@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package infrastructure;
+
+import "google/protobuf/timestamp.proto";
+
+// Main execution message
+message InfrastructureExecution {
+  string execution_id = 1;
+  string infrastructure_id = 2;
+  ExecutionStatus status = 3;
+  google.protobuf.Timestamp started_at = 4;
+  google.protobuf.Timestamp stopped_at = 5;
+  repeated string instance_ids = 6;
+  PipelineExecutionContext context = 7;
+  repeated PipelineApproval approvals = 8;
+  TransformationPlan transformation_plan = 9;
+  map<string, string> metadata = 10;
+  bool auto_approved = 11;
+  bool rollback_enabled = 12;
+  string error_message = 13;
+}
+
+enum ExecutionStatus {
+  STATUS_UNKNOWN = 0;
+  PENDING = 1;
+  RUNNING = 2;
+  SUCCESS = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+}
+
+message PipelineExecutionContext {
+  string pipeline_id = 1;
+  string pipeline_name = 2;
+  string stage_id = 3;
+  string stage_name = 4;
+  string step_id = 5;
+  string step_name = 6;
+  repeated string tags = 7;
+  string organization_id = 8;
+  string project_id = 9;
+  string account_id = 10;
+}
+
+message PipelineApproval {
+  string approval_id = 1;
+  UserInfo approver = 2;
+  google.protobuf.Timestamp approved_at = 3;
+  string comments = 4;
+  ApprovalStatus approval_status = 5;
+}
+
+enum ApprovalStatus {
+  APPROVAL_UNKNOWN = 0;
+  APPROVAL_PENDING = 1;
+  APPROVED = 2;
+  REJECTED = 3;
+}
+
+message UserInfo {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+  string role = 4;
+}
+
+message TransformationPlan {
+  string plan_id = 1;
+  string description = 2;
+  repeated Transformation transformations = 3;
+  map<string, TransformationOutput> outputs = 4;
+  int32 estimated_duration_seconds = 5;
+}
+
+message Transformation {
+  string transformation_id = 1;
+  string transformation_type = 2;
+  string config = 3;
+  int32 order = 4;
+  TransformationStatus status = 5;
+}
+
+enum TransformationStatus {
+  TRANSFORMATION_UNKNOWN = 0;
+  TRANSFORMATION_PENDING = 1;
+  TRANSFORMATION_RUNNING = 2;
+  TRANSFORMATION_COMPLETED = 3;
+  TRANSFORMATION_FAILED = 4;
+}
+
+message TransformationOutput {
+  string output_id = 1;
+  string resource_type = 2;
+  string resource_id = 3;
+  repeated string endpoints = 4;
+}
