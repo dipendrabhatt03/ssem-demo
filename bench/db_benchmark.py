@@ -49,6 +49,54 @@ def calculate_statistics(data):
         'p99': calculate_percentile(data, 99)
     }
 
+
+def aggregate_iteration_results(iteration_results, metric_key):
+    """
+    Aggregate a specific metric across multiple benchmark iterations
+
+    Args:
+        iteration_results: List of result dicts from multiple iterations
+        metric_key: Key to aggregate (e.g., 'throughput', 'total_time')
+
+    Returns:
+        dict with median, mean, stddev, min, max
+    """
+    values = [r[metric_key] for r in iteration_results if metric_key in r]
+
+    if not values:
+        return {}
+
+    return {
+        'median': statistics.median(values),
+        'mean': statistics.mean(values),
+        'stddev': statistics.stdev(values) if len(values) > 1 else 0,
+        'min': min(values),
+        'max': max(values),
+        'values': values  # Keep raw values for debugging
+    }
+
+
+def find_median_run(iteration_results, metric_key):
+    """
+    Find the iteration that has the median value for a given metric
+    Returns the full result dict of that iteration
+    """
+    if not iteration_results:
+        return None
+
+    # Extract metric values with their index
+    indexed_values = [(i, r[metric_key]) for i, r in enumerate(iteration_results) if metric_key in r]
+
+    if not indexed_values:
+        return iteration_results[0]
+
+    # Sort by value and find median
+    indexed_values.sort(key=lambda x: x[1])
+    median_idx = len(indexed_values) // 2
+
+    return iteration_results[indexed_values[median_idx][0]]
+
+
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -64,6 +112,10 @@ DB_CONFIG = {
 TEST_ROWS = 10000       # For bulk operations
 BATCH_SIZE = 100        # Batch size for bulk writes
 SINGLE_OPS = 1000       # Number of single operations to test
+
+# Multi-iteration configuration
+BENCHMARK_ITERATIONS = 3  # Number of measured benchmark runs
+WARMUP_ITERATIONS = 1     # Number of warmup runs (discarded from results)
 
 # ============================================================================
 # DATA GENERATION
@@ -278,6 +330,66 @@ def benchmark_single_reads(conn, table_name, count=SINGLE_OPS):
 
     return stats
 
+
+# ============================================================================
+# MULTI-ITERATION BENCHMARK WRAPPERS
+# ============================================================================
+
+def run_benchmark_with_iterations(benchmark_func, *args, metric_key='throughput', **kwargs):
+    """
+    Run a benchmark function multiple times with warmup
+
+    Args:
+        benchmark_func: The benchmark function to run
+        *args: Positional arguments to pass to benchmark function
+        metric_key: Key to use for finding median run (default: 'throughput')
+        **kwargs: Keyword arguments to pass to benchmark function
+
+    Returns:
+        dict with:
+            - 'iterations': list of all measured iteration results
+            - 'aggregated': aggregated metrics across iterations
+            - 'median_run': the full result from the median iteration
+    """
+    print(f"  Running {WARMUP_ITERATIONS} warmup + {BENCHMARK_ITERATIONS} measured iterations...")
+
+    # Warmup iterations (discarded)
+    for i in range(WARMUP_ITERATIONS):
+        print(f"    Warmup {i+1}/{WARMUP_ITERATIONS}...", end=' ')
+        benchmark_func(*args, **kwargs)
+        print("✓")
+
+    # Measured iterations
+    iteration_results = []
+    for i in range(BENCHMARK_ITERATIONS):
+        print(f"    Iteration {i+1}/{BENCHMARK_ITERATIONS}...", end=' ')
+        result = benchmark_func(*args, **kwargs)
+        iteration_results.append(result)
+        if metric_key in result:
+            print(f"✓ ({result[metric_key]:.2f})")
+        else:
+            print("✓")
+
+    # Find median run (use its detailed stats like percentiles)
+    median_run = find_median_run(iteration_results, metric_key)
+
+    # Aggregate key metrics across iterations
+    aggregated = {}
+    if iteration_results:
+        # Get all keys from first result to know what to aggregate
+        sample_result = iteration_results[0]
+        for key in sample_result:
+            # Skip nested dicts and non-numeric values
+            if isinstance(sample_result[key], (int, float)):
+                aggregated[key] = aggregate_iteration_results(iteration_results, key)
+
+    return {
+        'iterations': iteration_results,
+        'aggregated': aggregated,
+        'median_run': median_run
+    }
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
@@ -286,6 +398,7 @@ def main():
     print("=" * 80)
     print("PostgreSQL Database-Level Benchmark: Binary vs JSON")
     print(f"Bulk operations: {TEST_ROWS:,} rows | Single operations: {SINGLE_OPS:,} iterations")
+    print(f"Multi-iteration mode: {WARMUP_ITERATIONS} warmup + {BENCHMARK_ITERATIONS} measured runs")
     print("=" * 80)
 
     # Connect and setup
@@ -314,23 +427,39 @@ def main():
     print("BINARY FORMAT (BYTEA)")
     print("-" * 80)
 
-    print(f"Bulk write ({TEST_ROWS:,} rows)...")
-    binary_bulk_write = benchmark_write(conn, 'infra_exec_binary', binary_payloads)
-    print(f"✓ Bulk Write:   {binary_bulk_write['time_sec']:.3f}s | {binary_bulk_write['throughput']:,.0f} rows/sec")
+    print(f"\nBulk write ({TEST_ROWS:,} rows)...")
+    binary_bulk_write_results = run_benchmark_with_iterations(
+        benchmark_write, conn, 'infra_exec_binary', binary_payloads, metric_key='throughput'
+    )
+    bw_agg = binary_bulk_write_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={bw_agg['median']:,.0f} rows/s | mean={bw_agg['mean']:,.0f} | stddev={bw_agg['stddev']:,.0f} | [{bw_agg['min']:,.0f}–{bw_agg['max']:,.0f}]")
 
-    print(f"Bulk read ({TEST_ROWS:,} rows)...")
-    binary_bulk_read = benchmark_read(conn, 'infra_exec_binary')
-    print(f"✓ Bulk Read:    {binary_bulk_read['time_sec']:.3f}s | {binary_bulk_read['throughput']:,.0f} rows/sec")
+    print(f"\nBulk read ({TEST_ROWS:,} rows)...")
+    binary_bulk_read_results = run_benchmark_with_iterations(
+        benchmark_read, conn, 'infra_exec_binary', metric_key='throughput'
+    )
+    br_agg = binary_bulk_read_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={br_agg['median']:,.0f} rows/s | mean={br_agg['mean']:,.0f} | stddev={br_agg['stddev']:,.0f} | [{br_agg['min']:,.0f}–{br_agg['max']:,.0f}]")
 
     clear_table(conn, 'infra_exec_binary')
 
-    print(f"Single writes ({SINGLE_OPS:,} operations)...")
-    binary_single_write = benchmark_single_writes(conn, 'infra_exec_binary', binary_payloads, SINGLE_OPS)
-    print(f"✓ Single Write: {binary_single_write['throughput']:,.0f} ops/sec | p50={binary_single_write['p50']:.3f}ms p90={binary_single_write['p90']:.3f}ms p95={binary_single_write['p95']:.3f}ms p99={binary_single_write['p99']:.3f}ms")
+    print(f"\nSingle writes ({SINGLE_OPS:,} operations)...")
+    binary_single_write_results = run_benchmark_with_iterations(
+        benchmark_single_writes, conn, 'infra_exec_binary', binary_payloads, SINGLE_OPS, metric_key='throughput'
+    )
+    bsw = binary_single_write_results['median_run']  # Use median run for percentiles
+    bsw_agg = binary_single_write_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={bsw_agg['median']:,.0f} ops/s | mean={bsw_agg['mean']:,.0f} | stddev={bsw_agg['stddev']:,.0f}")
+    print(f"  ✓ Latency (median run): p50={bsw['p50']:.3f}ms | p90={bsw['p90']:.3f}ms | p95={bsw['p95']:.3f}ms | p99={bsw['p99']:.3f}ms")
 
-    print(f"Single reads ({SINGLE_OPS:,} operations)...")
-    binary_single_read = benchmark_single_reads(conn, 'infra_exec_binary', SINGLE_OPS)
-    print(f"✓ Single Read:  {binary_single_read['throughput']:,.0f} ops/sec | p50={binary_single_read['p50']:.3f}ms p90={binary_single_read['p90']:.3f}ms p95={binary_single_read['p95']:.3f}ms p99={binary_single_read['p99']:.3f}ms")
+    print(f"\nSingle reads ({SINGLE_OPS:,} operations)...")
+    binary_single_read_results = run_benchmark_with_iterations(
+        benchmark_single_reads, conn, 'infra_exec_binary', SINGLE_OPS, metric_key='throughput'
+    )
+    bsr = binary_single_read_results['median_run']
+    bsr_agg = binary_single_read_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={bsr_agg['median']:,.0f} ops/s | mean={bsr_agg['mean']:,.0f} | stddev={bsr_agg['stddev']:,.0f}")
+    print(f"  ✓ Latency (median run): p50={bsr['p50']:.3f}ms | p90={bsr['p90']:.3f}ms | p95={bsr['p95']:.3f}ms | p99={bsr['p99']:.3f}ms")
 
     # Benchmark JSON
     clear_table(conn, 'infra_exec_json')
@@ -339,27 +468,43 @@ def main():
     print("JSON FORMAT (JSONB)")
     print("-" * 80)
 
-    print(f"Bulk write ({TEST_ROWS:,} rows)...")
-    json_bulk_write = benchmark_write(conn, 'infra_exec_json', json_payloads)
-    print(f"✓ Bulk Write:   {json_bulk_write['time_sec']:.3f}s | {json_bulk_write['throughput']:,.0f} rows/sec")
+    print(f"\nBulk write ({TEST_ROWS:,} rows)...")
+    json_bulk_write_results = run_benchmark_with_iterations(
+        benchmark_write, conn, 'infra_exec_json', json_payloads, metric_key='throughput'
+    )
+    jw_agg = json_bulk_write_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={jw_agg['median']:,.0f} rows/s | mean={jw_agg['mean']:,.0f} | stddev={jw_agg['stddev']:,.0f} | [{jw_agg['min']:,.0f}–{jw_agg['max']:,.0f}]")
 
-    print(f"Bulk read ({TEST_ROWS:,} rows)...")
-    json_bulk_read = benchmark_read(conn, 'infra_exec_json')
-    print(f"✓ Bulk Read:    {json_bulk_read['time_sec']:.3f}s | {json_bulk_read['throughput']:,.0f} rows/sec")
+    print(f"\nBulk read ({TEST_ROWS:,} rows)...")
+    json_bulk_read_results = run_benchmark_with_iterations(
+        benchmark_read, conn, 'infra_exec_json', metric_key='throughput'
+    )
+    jr_agg = json_bulk_read_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={jr_agg['median']:,.0f} rows/s | mean={jr_agg['mean']:,.0f} | stddev={jr_agg['stddev']:,.0f} | [{jr_agg['min']:,.0f}–{jr_agg['max']:,.0f}]")
 
     clear_table(conn, 'infra_exec_json')
 
-    print(f"Single writes ({SINGLE_OPS:,} operations)...")
-    json_single_write = benchmark_single_writes(conn, 'infra_exec_json', json_payloads, SINGLE_OPS)
-    print(f"✓ Single Write: {json_single_write['throughput']:,.0f} ops/sec | p50={json_single_write['p50']:.3f}ms p90={json_single_write['p90']:.3f}ms p95={json_single_write['p95']:.3f}ms p99={json_single_write['p99']:.3f}ms")
+    print(f"\nSingle writes ({SINGLE_OPS:,} operations)...")
+    json_single_write_results = run_benchmark_with_iterations(
+        benchmark_single_writes, conn, 'infra_exec_json', json_payloads, SINGLE_OPS, metric_key='throughput'
+    )
+    jsw = json_single_write_results['median_run']
+    jsw_agg = json_single_write_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={jsw_agg['median']:,.0f} ops/s | mean={jsw_agg['mean']:,.0f} | stddev={jsw_agg['stddev']:,.0f}")
+    print(f"  ✓ Latency (median run): p50={jsw['p50']:.3f}ms | p90={jsw['p90']:.3f}ms | p95={jsw['p95']:.3f}ms | p99={jsw['p99']:.3f}ms")
 
-    print(f"Single reads ({SINGLE_OPS:,} operations)...")
-    json_single_read = benchmark_single_reads(conn, 'infra_exec_json', SINGLE_OPS)
-    print(f"✓ Single Read:  {json_single_read['throughput']:,.0f} ops/sec | p50={json_single_read['p50']:.3f}ms p90={json_single_read['p90']:.3f}ms p95={json_single_read['p95']:.3f}ms p99={json_single_read['p99']:.3f}ms")
+    print(f"\nSingle reads ({SINGLE_OPS:,} operations)...")
+    json_single_read_results = run_benchmark_with_iterations(
+        benchmark_single_reads, conn, 'infra_exec_json', SINGLE_OPS, metric_key='throughput'
+    )
+    jsr = json_single_read_results['median_run']
+    jsr_agg = json_single_read_results['aggregated']['throughput']
+    print(f"  ✓ Throughput: median={jsr_agg['median']:,.0f} ops/s | mean={jsr_agg['mean']:,.0f} | stddev={jsr_agg['stddev']:,.0f}")
+    print(f"  ✓ Latency (median run): p50={jsr['p50']:.3f}ms | p90={jsr['p90']:.3f}ms | p95={jsr['p95']:.3f}ms | p99={jsr['p99']:.3f}ms")
 
     # Summary
     print("\n" + "=" * 80)
-    print("SUMMARY: Binary vs JSON")
+    print(f"SUMMARY: Binary vs JSON ({BENCHMARK_ITERATIONS} iterations)")
     print("=" * 80)
 
     print("\nPayload Size:")
@@ -367,31 +512,48 @@ def main():
     print(f"  Binary: {len(binary_payloads[0]):,} bytes")
     print(f"  JSON:   {len(json_payloads[0]):,} bytes ({size_diff:+.1f}%)")
 
-    print("\nBulk Write Performance:")
-    throughput_diff = ((json_bulk_write['throughput'] - binary_bulk_write['throughput']) / binary_bulk_write['throughput']) * 100
-    print(f"  Binary: {binary_bulk_write['throughput']:,.0f} rows/sec")
-    print(f"  JSON:   {json_bulk_write['throughput']:,.0f} rows/sec ({throughput_diff:+.1f}%)")
+    print("\nBulk Write Performance (median):")
+    throughput_diff = ((jw_agg['median'] - bw_agg['median']) / bw_agg['median']) * 100
+    print(f"  Binary: {bw_agg['median']:,.0f} rows/sec | stability: {(bw_agg['stddev']/bw_agg['mean']*100):.1f}% CV")
+    print(f"  JSON:   {jw_agg['median']:,.0f} rows/sec ({throughput_diff:+.1f}%) | stability: {(jw_agg['stddev']/jw_agg['mean']*100):.1f}% CV")
 
-    print("\nSingle Write Performance:")
-    throughput_diff = ((json_single_write['throughput'] - binary_single_write['throughput']) / binary_single_write['throughput']) * 100
-    latency_diff = ((json_single_write['p50'] - binary_single_write['p50']) / binary_single_write['p50']) * 100
-    print(f"  Binary: {binary_single_write['throughput']:,.0f} ops/sec | p50={binary_single_write['p50']:.3f}ms")
-    print(f"  JSON:   {json_single_write['throughput']:,.0f} ops/sec ({throughput_diff:+.1f}%) | p50={json_single_write['p50']:.3f}ms ({latency_diff:+.1f}%)")
+    print("\nSingle Write Performance (median):")
+    throughput_diff = ((jsw_agg['median'] - bsw_agg['median']) / bsw_agg['median']) * 100
+    latency_diff = ((jsw['p50'] - bsw['p50']) / bsw['p50']) * 100
+    print(f"  Binary: {bsw_agg['median']:,.0f} ops/sec | p50={bsw['p50']:.3f}ms | stability: {(bsw_agg['stddev']/bsw_agg['mean']*100):.1f}% CV")
+    print(f"  JSON:   {jsw_agg['median']:,.0f} ops/sec ({throughput_diff:+.1f}%) | p50={jsw['p50']:.3f}ms ({latency_diff:+.1f}%) | stability: {(jsw_agg['stddev']/jsw_agg['mean']*100):.1f}% CV")
 
-    print("\nBulk Read Performance:")
-    throughput_diff = ((json_bulk_read['throughput'] - binary_bulk_read['throughput']) / binary_bulk_read['throughput']) * 100
-    print(f"  Binary: {binary_bulk_read['throughput']:,.0f} rows/sec")
-    print(f"  JSON:   {json_bulk_read['throughput']:,.0f} rows/sec ({throughput_diff:+.1f}%)")
+    print("\nBulk Read Performance (median):")
+    throughput_diff = ((jr_agg['median'] - br_agg['median']) / br_agg['median']) * 100
+    print(f"  Binary: {br_agg['median']:,.0f} rows/sec | stability: {(br_agg['stddev']/br_agg['mean']*100):.1f}% CV")
+    print(f"  JSON:   {jr_agg['median']:,.0f} rows/sec ({throughput_diff:+.1f}%) | stability: {(jr_agg['stddev']/jr_agg['mean']*100):.1f}% CV")
 
-    print("\nSingle Read Performance:")
-    throughput_diff = ((json_single_read['throughput'] - binary_single_read['throughput']) / binary_single_read['throughput']) * 100
-    latency_diff = ((json_single_read['p50'] - binary_single_read['p50']) / binary_single_read['p50']) * 100
-    print(f"  Binary: {binary_single_read['throughput']:,.0f} ops/sec | p50={binary_single_read['p50']:.3f}ms")
-    print(f"  JSON:   {json_single_read['throughput']:,.0f} ops/sec ({throughput_diff:+.1f}%) | p50={json_single_read['p50']:.3f}ms ({latency_diff:+.1f}%)")
+    print("\nSingle Read Performance (median):")
+    throughput_diff = ((jsr_agg['median'] - bsr_agg['median']) / bsr_agg['median']) * 100
+    latency_diff = ((jsr['p50'] - bsr['p50']) / bsr['p50']) * 100
+    print(f"  Binary: {bsr_agg['median']:,.0f} ops/sec | p50={bsr['p50']:.3f}ms | stability: {(bsr_agg['stddev']/bsr_agg['mean']*100):.1f}% CV")
+    print(f"  JSON:   {jsr_agg['median']:,.0f} ops/sec ({throughput_diff:+.1f}%) | p50={jsr['p50']:.3f}ms ({latency_diff:+.1f}%) | stability: {(jsr_agg['stddev']/jsr_agg['mean']*100):.1f}% CV")
 
-    print("\nTail Latencies (p99):")
-    print(f"  Single Write - Binary: {binary_single_write['p99']:.3f} ms | JSON: {json_single_write['p99']:.3f} ms")
-    print(f"  Single Read  - Binary: {binary_single_read['p99']:.3f} ms | JSON: {json_single_read['p99']:.3f} ms")
+    print("\nTail Latencies (p99, median run):")
+    print(f"  Single Write - Binary: {bsw['p99']:.3f} ms | JSON: {jsw['p99']:.3f} ms")
+    print(f"  Single Read  - Binary: {bsr['p99']:.3f} ms | JSON: {jsr['p99']:.3f} ms")
+
+    print("\nStability Assessment:")
+    print("  (CV = Coefficient of Variation, lower is more stable)")
+    def assess_stability(cv):
+        if cv < 5:
+            return "Excellent (<5%)"
+        elif cv < 10:
+            return "Good (<10%)"
+        elif cv < 15:
+            return "Fair (<15%)"
+        else:
+            return f"Variable ({cv:.1f}%)"
+
+    print(f"  Binary bulk write:  {assess_stability(bw_agg['stddev']/bw_agg['mean']*100)}")
+    print(f"  JSON bulk write:    {assess_stability(jw_agg['stddev']/jw_agg['mean']*100)}")
+    print(f"  Binary single read: {assess_stability(bsr_agg['stddev']/bsr_agg['mean']*100)}")
+    print(f"  JSON single read:   {assess_stability(jsr_agg['stddev']/jsr_agg['mean']*100)}")
 
     print()
     conn.close()

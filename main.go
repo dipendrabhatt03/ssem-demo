@@ -126,7 +126,7 @@ func main() {
 	// Unmarshal JSON into v1 (old consumer)
 	// Use DiscardUnknown to ignore the new 'message' field (same behavior as binary)
 	v1FromJSON := &v1.InfrastructureExecution{}
-	unmarshalOpts := protojson.UnmarshalOptions{DiscardUnknown: true}
+	unmarshalOpts := protojson.UnmarshalOptions{`DiscardUnknown`: true}
 	if err := unmarshalOpts.Unmarshal(v2JSON, v1FromJSON); err != nil {
 		panic(err)
 	}
