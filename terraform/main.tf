@@ -53,7 +53,7 @@ locals {
 
   # Cluster CA certificate (base64 decoded)
   # This certificate validates the cluster's identity
-  cluster_ca_certificate = var.gke_cluster_ca_certificate
+  cluster_ca_certificate = base64decode(var.gke_cluster_ca_certificate)
 }
 
 # ==============================================================================
@@ -82,7 +82,7 @@ provider "kubernetes" {
   token = data.google_client_config.default.access_token
 
   # Cluster CA certificate for TLS verification
-  cluster_ca_certificate = local.cluster_ca_certificate
+  cluster_ca_certificate = base64decode(local.cluster_ca_certificate)
 }
 
 # ==============================================================================
