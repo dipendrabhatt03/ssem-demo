@@ -82,7 +82,7 @@ provider "kubernetes" {
   token = data.google_client_config.default.access_token
 
   # Cluster CA certificate for TLS verification
-  cluster_ca_certificate = base64decode(local.cluster_ca_certificate)
+  cluster_ca_certificate = local.cluster_ca_certificate
 }
 
 # ==============================================================================
