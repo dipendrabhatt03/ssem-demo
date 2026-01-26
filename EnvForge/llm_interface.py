@@ -104,12 +104,13 @@ def parse_intent(user_text: str) -> Dict[str, Any]:
     - Entities the user wants to create
     - Backend types for each entity
     - Any explicitly mentioned values, steps, or dependencies
+    - Explicit bindings (environment, workspace, etc.) mentioned in the request
 
     Args:
         user_text: Natural language description from user
 
     Returns:
-        Structured intent dict with entities and configuration
+        Structured intent dict with entities, configuration, and bindings
     """
     client = _get_anthropic_client()
 
@@ -127,13 +128,20 @@ Available resources:
 - IaCM Templates: TempNamespace (creates a Kubernetes namespace)
 - Catalog Components: frontend, backend
 - CD Environments: mycluster
+- Infrastructures: ssemteamdelegate
+- Workspaces: dev-workspace, prod-workspace
+
+Extract:
+1. Entities to create
+2. Explicit bindings if mentioned (environment, workspace, infrastructure, pipelines)
 
 Rules:
 - Assign short IDs to entities (e.g., "ns" for namespace, "frontend" for frontend service)
 - If user mentions a namespace, use backend_type: "HarnessIACM" with template: "TempNamespace"
 - If user mentions a service/component, use backend_type: "Catalog" with component name
 - If a Catalog entity needs a namespace, add the namespace entity ID to its dependencies array
-- Only include entities explicitly mentioned by the user
+- If user explicitly mentions environment/workspace/infrastructure/pipelines, include in bindings
+- Only include entities and bindings explicitly mentioned by the user
 
 CRITICAL: Return ONLY raw JSON. Do NOT wrap in markdown code blocks. Do NOT use ```json or ```. Just the JSON object:
 {{
@@ -146,8 +154,18 @@ CRITICAL: Return ONLY raw JSON. Do NOT wrap in markdown code blocks. Do NOT use 
       "dependencies": ["dep-id1", "dep-id2"],
       "inputs": {{}}
     }}
-  ]
-}}"""
+  ],
+  "bindings": {{
+    "entity_id.path": "value"
+    (Examples:
+      - "frontend.environment.identifier": "mycluster" (environment ID)
+      - "frontend.environment.infra.identifier": "ssemteamdelegate" (infrastructure ID - NOTE: nested under environment)
+      - "ns.workspace": "dev-workspace" (workspace name)
+    )
+  }}
+}}
+
+IMPORTANT: For infrastructure bindings, use the nested path "environment.infra.identifier", NOT "infrastructure.identifier"."""
 
     try:
         message = client.messages.create(
@@ -321,6 +339,188 @@ Return ONLY the question text (no markdown, no extra formatting)."""
         return f"Please provide value for '{missing_req.path}' in entity '{missing_req.entity_id}'. Reason: {missing_req.reason}"
 
 
+def formulate_compound_question(entity_id: str, requirements: list, entity=None) -> str:
+    """
+    Generate a compound (multi-part) question for configuring an entire entity.
+
+    This improves UX by asking for all related fields at once instead of one-by-one.
+
+    Args:
+        entity_id: ID of the entity being configured
+        requirements: List of MissingRequirement objects for this entity
+        entity: Optional Entity object for domain context
+
+    Returns:
+        Multi-part question string
+    """
+    client = _get_anthropic_client()
+
+    # Extract domain context
+    entity_type = "entity"
+    domain_name = entity_id
+    if entity:
+        if entity.backend_type == "HarnessIACM":
+            template_id = entity.steps.get("create", {}).get("template") if entity.steps else None
+            if template_id:
+                entity_type = f"IaCM template '{template_id}'"
+                domain_name = template_id
+        elif entity.backend_type == "Catalog":
+            component_id = entity.values.get("identifier") if entity.values else None
+            if component_id:
+                entity_type = f"Catalog service '{component_id}'"
+                domain_name = component_id
+
+    # Group requirements by category
+    config_items = []
+    for req in requirements:
+        config_items.append({
+            "path": req.path,
+            "reason": req.reason,
+            "options": req.options
+        })
+
+    prompt = f"""Generate a compound configuration question for a Harness Environment Blueprint entity.
+
+Entity: {entity_type} (ID: {entity_id})
+Backend type: {entity.backend_type if entity else "unknown"}
+
+Missing configuration items:
+{json.dumps(config_items, indent=2)}
+
+Generate ONE question that:
+1. Explains what's being configured (use domain name: {domain_name})
+2. Lists all required fields as numbered sub-questions
+3. Mentions defaults if available
+4. Tells user they can answer all at once or individually
+5. Uses friendly, entity-level language (not low-level field paths)
+
+IMPORTANT LANGUAGE RULES:
+- For paths like "steps.apply" or "steps.destroy", ask "Which pipeline should be used for apply/destroy?"
+- Do NOT ask "What apply step" or "What destroy step" - steps always use pipelines
+- Use clear pipeline-focused language: "Which pipeline...", "What pipeline..."
+
+Example format:
+"Let's configure the {entity_type}:
+1. [Field 1 description]
+2. Which pipeline should be used for apply? (default: X)
+3. Which pipeline should be used for destroy?
+
+You can provide all answers at once or answer individually."
+
+Keep it concise and domain-focused. Avoid implementation details.
+
+Return ONLY the question text."""
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-5@20250929",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return message.content[0].text.strip()
+    except Exception as e:
+        print(f"Error generating compound question: {e}")
+        # Fallback to simple list
+        items = "\n".join(f"{i+1}. {req.path}: {req.reason}" for i, req in enumerate(requirements))
+        return f"Please configure {entity_type} (ID: {entity_id}):\n{items}"
+
+
+def parse_compound_answer(user_text: str, requirements: list, entity=None) -> Dict[str, Any]:
+    """
+    Parse a multi-field answer for compound questions.
+
+    Args:
+        user_text: User's answer (may address multiple fields)
+        requirements: List of MissingRequirement objects being addressed
+        entity: Optional Entity object for context
+
+    Returns:
+        Dict mapping path -> parsed value/classification
+        Format: {
+            "path1": {"value": "...", "classification": "..."},
+            "path2": {"value": "...", "classification": "..."},
+            ...
+        }
+    """
+    client = _get_anthropic_client()
+
+    # Build schema of expected fields
+    fields_schema = []
+    for req in requirements:
+        fields_schema.append({
+            "path": req.path,
+            "reason": req.reason,
+            "options": req.options
+        })
+
+    prompt = f"""Parse a multi-field answer for configuring a Harness Environment Blueprint entity.
+
+Expected fields (numbered):
+{json.dumps([{"number": i+1, **schema} for i, schema in enumerate(fields_schema)], indent=2)}
+
+User's answer: "{user_text}"
+
+CRITICAL RULES:
+1. ONLY extract values for fields the user EXPLICITLY addresses
+2. If user says "1. X", ONLY apply to field 1, NOT to fields 2, 3, etc.
+3. If user doesn't mention a field number, don't make up an answer for it
+4. Skip any fields not explicitly addressed by the user
+
+For each field the user explicitly addresses:
+1. The value (if user provides specific value) OR field name if requesting blueprint input
+2. The classification:
+   - "blueprint_input" if user says "user input", "configurable", "runtime", "take it as input", etc.
+   - "literal" if user provides a specific value
+
+IMPORTANT: When classification is "blueprint_input" and user doesn't specify a parameter name,
+set value to the field name from the path (last segment).
+
+Examples:
+- Question has 3 fields, user says "1. take it from user input" → ONLY answer field 1, skip 2 and 3
+- Question has 3 fields, user says "use DeployService for apply and UninstallService for destroy" → answer fields matching "apply" and "destroy"
+- Question has 1 field, user says "take as user input" → answer that 1 field
+
+Return ONLY raw JSON (no markdown, no code blocks):
+{{
+  "field_path": {{"value": "extracted_value_or_field_name", "classification": "blueprint_input" or "literal"}},
+  ...
+}}
+
+Only include fields the user EXPLICITLY addressed. Empty object {{}} if nothing addressed.
+
+CRITICAL: Return valid JSON only. No other text."""
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-5@20250929",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        response_text = message.content[0].text.strip()
+        clean_json = _extract_json_from_markdown(response_text)
+        parsed = json.loads(clean_json)
+
+        # Safety net: default empty blueprint input values to field name
+        if isinstance(parsed, dict):
+            for path, value_info in parsed.items():
+                if isinstance(value_info, dict):
+                    classification = value_info.get('classification', 'literal')
+                    value = value_info.get('value', '')
+
+                    # If blueprint_input with empty/missing value, default to field name
+                    if classification == 'blueprint_input' and not value:
+                        # Extract field name from path (last segment)
+                        field_name = path.split('.')[-1]
+                        value_info['value'] = field_name
+
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception as e:
+        print(f"Error parsing compound answer: {e}")
+        return {}
+
+
 def _classify_answer_intent(user_text: str, path: str) -> str:
     """
     Use LLM to classify if user wants a blueprint input, entity input, or literal value.
@@ -402,6 +602,13 @@ def parse_answer(user_text: str, missing_req: MissingRequirement) -> Dict[str, A
     if wants_blueprint_input:
         # ISSUE 4 FIX: User wants a configurable input
         # Extract the input name they want to create
+
+        # Default: use the field name from the path (last segment)
+        # For "steps.apply.variables.name" → default to "name"
+        # For "values.workspace" → default to "workspace"
+        path_parts = missing_req.path.split(".")
+        default_name = path_parts[-1]
+
         prompt = f"""You are extracting a blueprint input name from a user's answer.
 
 The user wants to make this value configurable at the blueprint level.
@@ -409,15 +616,18 @@ The user wants to make this value configurable at the blueprint level.
 Context:
 - Field path: {missing_req.path}
 - User's answer: "{user_text}"
+- Default name (from field path): "{default_name}"
 
-Extract the input parameter name they want to create.
-If they don't specify a name, suggest one based on the field path.
+Rules:
+1. If user specifies a parameter name explicitly (e.g., "call it cluster_name"), use that
+2. Otherwise, use the default name from the field path: "{default_name}"
 
 Examples:
-- "make it user input" for path "values.workspace" → "workspace"
-- "take it from user input" for path "config.name" → "name"
-- "use a parameter called cluster_name" → "cluster_name"
-- "configurable" for path "values.identifier" → "identifier"
+- "make it user input" for path "values.workspace" → "workspace" (use default)
+- "take it from user input" for path "steps.apply.variables.name" → "name" (use default)
+- "use a parameter called cluster_name" → "cluster_name" (user specified)
+- "configurable" for path "values.identifier" → "identifier" (use default)
+- "user should provide this" for path "config.region" → "region" (use default)
 
 Return ONLY the parameter name (lowercase, underscores for spaces)."""
     elif is_identifier_path:

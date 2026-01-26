@@ -32,6 +32,7 @@ class ConversationEngine:
         self.missing_requirements: List[MissingRequirement] = []
         self.current_question_index: int = 0
         self.yaml_output: Optional[str] = None
+        self.current_entity_group: List[MissingRequirement] = []  # For compound questions
 
     def process_user_input(self, user_text: str) -> str:
         """
@@ -68,6 +69,10 @@ class ConversationEngine:
 
         # Create initial graph from intent
         self.graph = self._build_graph_from_intent(intent)
+
+        # Apply explicit bindings from intent (UX improvement)
+        self._apply_intent_bindings(intent.get("bindings", {}))
+
         self.state = "GRAPH_CREATED"
 
         # Validate and check for missing requirements
@@ -78,11 +83,44 @@ class ConversationEngine:
         if self.current_question_index >= len(self.missing_requirements):
             return "No pending questions"
 
+        # UX IMPROVEMENT: Try parsing as compound answer first
+        if self.current_entity_group:
+            from llm_interface import parse_compound_answer
+            entity = self.graph.entities.get(self.current_entity_group[0].entity_id) if self.current_entity_group else None
+
+            compound_parsed = parse_compound_answer(user_text, self.current_entity_group, entity)
+            print(f"compound answer parsed={compound_parsed}")
+
+            if compound_parsed:
+                # Apply all parsed updates
+                updates_applied = 0
+                for path, value_info in compound_parsed.items():
+                    # Find the requirement for this path
+                    req = next((r for r in self.current_entity_group if r.path == path), None)
+                    if req:
+                        update = {
+                            "entity_id": req.entity_id,
+                            "path": path,
+                            "value": value_info.get("value"),
+                            "classification": value_info.get("classification", "literal")
+                        }
+                        self._apply_update(update)
+                        updates_applied += 1
+
+                print(f"Applied {updates_applied} updates from compound answer")
+
+                # Clear current entity group
+                self.current_entity_group = []
+
+                # Re-validate to see what's still missing
+                return self._validate_and_continue()
+
+        # Fallback: Parse as single answer (old behavior)
         current_req = self.missing_requirements[self.current_question_index]
 
         # Parse user answer using LLM
         update = parse_answer(user_text, current_req)
-        print(f"answer parsed={update}")
+        print(f"single answer parsed={update}")
 
         # Check for error in parsing
         if update.get("error"):
@@ -112,6 +150,9 @@ class ConversationEngine:
         """Validate graph and continue state machine."""
         self.state = "VALIDATION"
 
+        # UX IMPROVEMENT: Auto-fill obvious values before validation
+        self._auto_fill_obvious_values()
+
         # Auto-wire dependencies
         self.graph = auto_wire_dependencies(self.graph)
 
@@ -123,11 +164,23 @@ class ConversationEngine:
             self.state = "NEEDS_INPUT"
             self.current_question_index = 0
 
-            # Ask first question
-            first_req = self.missing_requirements[0]
+            # UX IMPROVEMENT: Group requirements by entity
+            grouped_requirements = self._group_missing_requirements(self.missing_requirements)
+
+            # Get first entity with missing requirements
+            first_entity_id = list(grouped_requirements.keys())[0]
+            entity_requirements = grouped_requirements[first_entity_id]
+
             # Get entity for domain context
-            entity = self.graph.entities.get(first_req.entity_id) if self.graph else None
-            question = formulate_question(first_req, entity)
+            entity = self.graph.entities.get(first_entity_id) if self.graph else None
+
+            # UX IMPROVEMENT: Use compound question for all requirements of this entity
+            from llm_interface import formulate_compound_question
+            question = formulate_compound_question(first_entity_id, entity_requirements, entity)
+
+            # Store grouped requirements for answer parsing
+            self.current_entity_group = entity_requirements
+
             return question
         else:
             # Graph is complete
@@ -269,9 +322,17 @@ class ConversationEngine:
                                 "value": f"${{{{env.config.{blueprint_input_name}}}}}"
                             })
 
-            # If path is just "steps.step_name" and value is a dict, set the entire step
-            elif len(parts) == 2 and isinstance(value, dict):
-                entity.steps[step_name] = value
+            # If path is just "steps.step_name"
+            elif len(parts) == 2:
+                if isinstance(value, dict):
+                    # Value is complete step dict
+                    entity.steps[step_name] = value
+                elif isinstance(value, str):
+                    # Value is pipeline name - create step with pipeline
+                    entity.steps[step_name] = {
+                        "pipeline": value,
+                        "variables": []
+                    }
             elif len(parts) >= 3:
                 # Setting a specific field in the step
                 field_name = parts[2]
@@ -294,3 +355,107 @@ class ConversationEngine:
     def get_yaml(self) -> Optional[str]:
         """Get the rendered YAML output if available."""
         return self.yaml_output
+
+    def _apply_intent_bindings(self, bindings: dict):
+        """
+        Apply explicit bindings from parsed intent.
+
+        This is a UX improvement: if user says "deploy frontend to mycluster",
+        we should auto-fill environment.identifier = "mycluster" without asking.
+
+        Args:
+            bindings: Dict of entity_id.path -> value from intent parsing
+        """
+        if not bindings:
+            return
+
+        for binding_path, value in bindings.items():
+            # Parse binding path: "entity_id.field.path"
+            parts = binding_path.split(".", 1)
+            if len(parts) != 2:
+                continue
+
+            entity_id, path = parts
+            if entity_id not in self.graph.entities:
+                continue
+
+            # Normalize path - most paths need "values." prefix for Catalog entities
+            if not path.startswith(("config.", "values.", "steps.", "env.config.")):
+                # This is a shorthand like "environment.identifier" or "workspace"
+                # For Catalog entities, these go under values
+                # For IaCM entities, workspace goes under values
+                path = f"values.{path}"
+
+            # Apply binding using existing update logic
+            update = {
+                "entity_id": entity_id,
+                "path": path,
+                "value": value,
+                "classification": "literal"
+            }
+            print(f"Applying intent binding: {entity_id}.{path} = {value}")
+            self._apply_update(update)
+
+    def _group_missing_requirements(self, requirements: List[MissingRequirement]) -> dict:
+        """
+        Group missing requirements by entity_id for better conversation flow.
+
+        Returns:
+            Dict mapping entity_id -> List[MissingRequirement]
+        """
+        grouped = {}
+        for req in requirements:
+            if req.entity_id not in grouped:
+                grouped[req.entity_id] = []
+            grouped[req.entity_id].append(req)
+        return grouped
+
+    def _auto_fill_obvious_values(self):
+        """
+        Opportunistically auto-fill values that can be determined without asking.
+
+        This is deterministic and safe:
+        - Single-option fields (only one valid choice)
+        - Pipeline defaults from metadata
+        - Fields with no variability
+
+        Auto-filling is logged for transparency.
+        """
+        from resource_db import PIPELINES
+
+        for entity_id, entity in self.graph.entities.items():
+            # Get available pipelines for this backend type
+            available_pipelines = [
+                p for p, meta in PIPELINES.items()
+                if meta["backend_type"] == entity.backend_type
+            ]
+
+            # Only auto-fill if there's exactly one pipeline option
+            if len(available_pipelines) == 1:
+                pipeline_id = available_pipelines[0]
+
+                # Auto-fill apply step if missing or incomplete
+                if "apply" not in entity.steps:
+                    entity.steps["apply"] = {
+                        "pipeline": pipeline_id,
+                        "variables": []
+                    }
+                    print(f"Auto-created apply step with pipeline: {pipeline_id}")
+                elif "pipeline" not in entity.steps["apply"]:
+                    entity.steps["apply"]["pipeline"] = pipeline_id
+                    if "variables" not in entity.steps["apply"]:
+                        entity.steps["apply"]["variables"] = []
+                    print(f"Auto-filled apply pipeline: {pipeline_id}")
+
+                # Auto-fill destroy step if missing or incomplete
+                if "destroy" not in entity.steps:
+                    entity.steps["destroy"] = {
+                        "pipeline": pipeline_id,
+                        "variables": []
+                    }
+                    print(f"Auto-created destroy step with pipeline: {pipeline_id}")
+                elif "pipeline" not in entity.steps["destroy"]:
+                    entity.steps["destroy"]["pipeline"] = pipeline_id
+                    if "variables" not in entity.steps["destroy"]:
+                        entity.steps["destroy"]["variables"] = []
+                    print(f"Auto-filled destroy pipeline: {pipeline_id}")

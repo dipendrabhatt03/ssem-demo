@@ -99,7 +99,16 @@ def _validate_backend_contract(entity_id: str, entity) -> List[MissingRequiremen
 
 
 def _validate_pipelines(entity_id: str, entity, graph: BlueprintGraph) -> List[MissingRequirement]:
-    """Validate that pipelines exist and their inputs are satisfied."""
+    """
+    Validate pipeline inputs are satisfied (STRUCTURAL check only).
+
+    IMPORTANT: We do NOT validate whether pipelines exist in backend.
+    - If pipeline is in our knowledge base, we validate its inputs
+    - If pipeline is NOT in our knowledge base, we accept it as-is
+    - This allows power users to reference external/future pipelines
+
+    This is a YAML builder, not a runtime validator.
+    """
     missing = []
 
     for step_name, step_data in entity.steps.items():
@@ -108,33 +117,25 @@ def _validate_pipelines(entity_id: str, entity, graph: BlueprintGraph) -> List[M
 
         pipeline_id = step_data["pipeline"]
 
-        # Check pipeline exists
+        # Try to get pipeline metadata (optional - may not exist)
         pipeline = get_pipeline(pipeline_id)
-        if not pipeline:
-            # Get list of available pipelines for this backend
-            from resource_db import PIPELINES
-            available = [p for p, meta in PIPELINES.items() if meta["backend_type"] == entity.backend_type]
-            missing.append(MissingRequirement(
-                entity_id=entity_id,
-                path=f"steps.{step_name}.pipeline",
-                reason=f"Pipeline '{pipeline_id}' does not exist",
-                options=available if available else None
-            ))
-            continue
 
-        # Validate pipeline inputs
-        for input_name, input_spec in pipeline.get("inputs", {}).items():
-            if input_spec.get("required", False):
-                # Check if variable exists for this input
-                variables = step_data.get("variables", [])
-                var_exists = any(v.get("name") == input_name for v in variables if isinstance(v, dict))
+        # If pipeline is in our knowledge base, validate its inputs
+        # If NOT in knowledge base, accept as-is (user knows what they're doing)
+        if pipeline:
+            # Validate pipeline inputs (structural check: are required inputs wired?)
+            for input_name, input_spec in pipeline.get("inputs", {}).items():
+                if input_spec.get("required", False):
+                    # Check if variable exists for this input
+                    variables = step_data.get("variables", [])
+                    var_exists = any(v.get("name") == input_name for v in variables if isinstance(v, dict))
 
-                if not var_exists and "default" not in input_spec:
-                    missing.append(MissingRequirement(
-                        entity_id=entity_id,
-                        path=f"steps.{step_name}.variables.{input_name}",
-                        reason=f"Pipeline '{pipeline_id}' requires input '{input_name}'"
-                    ))
+                    if not var_exists and "default" not in input_spec:
+                        missing.append(MissingRequirement(
+                            entity_id=entity_id,
+                            path=f"steps.{step_name}.variables.{input_name}",
+                            reason=f"Pipeline '{pipeline_id}' requires input '{input_name}'"
+                        ))
 
     return missing
 
@@ -239,7 +240,7 @@ def _validate_single_expression(entity_id: str, entity, graph: BlueprintGraph,
                 dep_id = parts[1]
                 output_field = parts[3]
 
-                # Check dependency exists
+                # STRUCTURAL checks only: dependency must be declared and exist in graph
                 if dep_id not in entity.dependencies:
                     missing.append(MissingRequirement(
                         entity_id=entity_id,
@@ -252,21 +253,8 @@ def _validate_single_expression(entity_id: str, entity, graph: BlueprintGraph,
                         path=expr,
                         reason=f"Dependency entity '{dep_id}' does not exist in the graph"
                     ))
-                else:
-                    # Validate output exists in dependency's resource metadata
-                    dep_entity = graph.entities[dep_id]
-                    if dep_entity.backend_type == "HarnessIACM":
-                        # Check if create step exists and has template
-                        if "create" in dep_entity.steps:
-                            template_id = dep_entity.steps["create"].get("template")
-                            if template_id:
-                                template = get_iacm_template(template_id)
-                                if template and output_field not in template.get("outputs", {}):
-                                    missing.append(MissingRequirement(
-                                        entity_id=entity_id,
-                                        path=expr,
-                                        reason=f"Output field '{output_field}' does not exist in dependency '{dep_id}' template outputs"
-                                    ))
+                # Do NOT validate if output field exists in template metadata (semantic check)
+                # Trust user's reference - backend will validate at execution time
 
     return missing
 
@@ -284,10 +272,20 @@ def _validate_resource_specific(entity_id: str, entity, graph: BlueprintGraph) -
 
 
 def _validate_iacm_entity(entity_id: str, entity) -> List[MissingRequirement]:
-    """Validate IaCM-specific requirements."""
+    """
+    Validate IaCM-specific requirements (STRUCTURAL checks only).
+
+    IMPORTANT: We do NOT validate whether templates exist in backend.
+    - IaCM semantic rule: entities cannot have entity-level inputs (validated)
+    - If template is in our knowledge base, we validate its inputs
+    - If template is NOT in our knowledge base, we accept it as-is
+    - This allows power users to reference external/future templates
+
+    This is a YAML builder, not a runtime validator.
+    """
     missing = []
 
-    # CRITICAL: IaCM entities must NEVER have entity-level inputs
+    # CRITICAL SEMANTIC RULE: IaCM entities must NEVER have entity-level inputs
     # They consume inputs only via blueprint-level (env.config) or dependencies
     if entity.inputs:
         missing.append(MissingRequirement(
@@ -296,9 +294,8 @@ def _validate_iacm_entity(entity_id: str, entity) -> List[MissingRequirement]:
             reason=f"IaCM entities cannot have entity-level inputs. Found: {list(entity.inputs.keys())}. "
                    f"IaCM template inputs must be wired via pipeline variables referencing env.config or dependencies."
         ))
-        # Continue validation to provide complete feedback
 
-    # Check if create step exists and has valid template
+    # Check if create step has template reference (structural requirement)
     if "create" in entity.steps:
         template_id = entity.steps["create"].get("template")
         if not template_id:
@@ -308,76 +305,52 @@ def _validate_iacm_entity(entity_id: str, entity) -> List[MissingRequirement]:
                 reason="Template ID is required for create step"
             ))
         else:
+            # Try to get template metadata (optional - may not exist)
             template = get_iacm_template(template_id)
-            if not template:
-                missing.append(MissingRequirement(
-                    entity_id=entity_id,
-                    path="steps.create.template",
-                    reason=f"Template '{template_id}' does not exist",
-                    options=list(get_iacm_template.__globals__['IACM_TEMPLATES'].keys()) if get_iacm_template.__globals__['IACM_TEMPLATES'] else None
-                ))
-            else:
-                # Check required template inputs are wired via pipeline variables
-                # IaCM template inputs must be provided as pipeline variables, NOT entity.inputs
-                # Only validate if apply step exists (to avoid premature validation)
-                if 'apply' in entity.steps:
-                    for input_name, input_spec in template.get("inputs", {}).items():
-                        if input_spec.get("required", False):
-                            # Check if this input is wired in apply or destroy step
-                            input_wired = False
-                            for step_name in ['apply', 'destroy']:
-                                if step_name in entity.steps:
-                                    variables = entity.steps[step_name].get('variables', [])
-                                    if any(v.get('name') == input_name for v in variables if isinstance(v, dict)):
-                                        input_wired = True
-                                        break
 
-                            if not input_wired:
-                                missing.append(MissingRequirement(
-                                    entity_id=entity_id,
-                                    path=f"steps.apply.variables.{input_name}",
-                                    reason=f"Required template input '{input_name}' must be wired as pipeline variable"
-                                ))
+            # If template is in our knowledge base, validate its inputs
+            # If NOT in knowledge base, accept as-is (user knows what they're doing)
+            if template and 'apply' in entity.steps:
+                # Check required template inputs are wired via pipeline variables
+                for input_name, input_spec in template.get("inputs", {}).items():
+                    if input_spec.get("required", False):
+                        # Check if this input is wired in apply or destroy step
+                        input_wired = False
+                        for step_name in ['apply', 'destroy']:
+                            if step_name in entity.steps:
+                                variables = entity.steps[step_name].get('variables', [])
+                                if any(v.get('name') == input_name for v in variables if isinstance(v, dict)):
+                                    input_wired = True
+                                    break
+
+                        if not input_wired:
+                            missing.append(MissingRequirement(
+                                entity_id=entity_id,
+                                path=f"steps.apply.variables.{input_name}",
+                                reason=f"Required template input '{input_name}' must be wired as pipeline variable"
+                            ))
 
     return missing
 
 
 def _validate_catalog_entity(entity_id: str, entity, graph: BlueprintGraph) -> List[MissingRequirement]:
-    """Validate Catalog-specific requirements."""
+    """
+    Validate Catalog-specific requirements.
+
+    IMPORTANT: This is STRUCTURAL validation only.
+    - We do NOT validate whether environment exists in backend
+    - We do NOT validate whether infrastructure exists in backend
+    - We do NOT validate environment-infrastructure pairing
+
+    Those are runtime concerns for the Harness backend.
+    This system is a YAML builder, not a semantic validator.
+    """
     missing = []
 
-    # Check environment exists (remove "values." prefix when accessing entity.values)
-    env_id = _get_nested_value(entity.values, "environment.identifier")
-    if env_id:
-        environment = get_cd_environment(env_id)
-        if not environment:
-            missing.append(MissingRequirement(
-                entity_id=entity_id,
-                path="values.environment.identifier",
-                reason=f"Environment '{env_id}' does not exist"
-            ))
-        else:
-            # Check infrastructure exists
-            infra_id = _get_nested_value(entity.values, "environment.infra.identifier")
-            if infra_id:
-                infra = get_infrastructure(env_id, infra_id)
-                if not infra:
-                    missing.append(MissingRequirement(
-                        entity_id=entity_id,
-                        path="values.environment.infra.identifier",
-                        reason=f"Infrastructure '{infra_id}' does not exist in environment '{env_id}'"
-                    ))
-                else:
-                    # Check required bindings are satisfied
-                    # This will be handled by dependency_resolver for auto-wiring
-                    # But we validate that bindings exist in values
-                    for required_binding in infra.get("required_bindings", []):
-                        # ISSUE 7 FIX: Bindings are directly under infra
-                        binding_path = f"environment.infra.{required_binding}"
-                        if not _get_nested_value(entity.values, binding_path):
-                            # Check if it can be auto-wired (don't report as missing yet)
-                            # dependency_resolver will handle this
-                            pass
+    # No semantic validation needed for Catalog entities
+    # Contract validation already ensures required fields are present
+    # Dependency resolver handles binding auto-wiring
+    # Backend will validate existence at execution time
 
     return missing
 

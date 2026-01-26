@@ -26,28 +26,49 @@ IACM_TEMPLATES = {
 
 # Catalog components with inputs and default pipelines
 CATALOG_COMPONENTS = {
-    "frontend": {
-        "component_id": "frontend",
-        "inputs": {
-            "version": {"type": "string", "default": "v1.1.0"},
-            "replicas": {"type": "integer", "default": 1}
-        },
+    "ssemdemofrontend": {
+        "component_id": "ssemdemofrontend",
+        "inputs": {},
         "pipelines": {
             "apply": "DeployService",
             "destroy": "UninstallService"
         }
+    },
+    "ssemdemobackend": {
+        "component_id": "ssemdemobackend",
+        "inputs": {},
+        "pipelines": {}
     }
 }
 
 # CD environments with infrastructures and required bindings
 CD_ENVIRONMENTS = {
-    "mycluster": {
-        "environment_id": "mycluster",
+    "ssemdipenmunklindeenv": {
+        "environment_id": "ssemdipenmunklindeenv",
         "infrastructures": [
             {
-                "infra_id": "ssemteamdelegate",
+                "infra_id": "ssemteam",
                 "required_bindings": ["namespace"]
-            }
+            },
+            {
+                "infra_id": "munklinde96",
+                "required_bindings": ["namespace"]
+            },
+
+        ]
+    },
+    "test": {
+        "environment_id": "test",
+        "infrastructures": [
+            {
+                "infra_id": "test",
+                "required_bindings": []
+            },
+            {
+                "infra_id": "ssemhelminfra",
+                "required_bindings": ["namespace"]
+            },
+
         ]
     }
 }
