@@ -37,22 +37,21 @@ def render_yaml(graph: BlueprintGraph) -> str:
     return yaml.dump(blueprint, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
-def _render_global_inputs(graph: BlueprintGraph) -> list:
-    """Render blueprint.inputs from global_inputs."""
-    inputs = []
+def _render_global_inputs(graph: BlueprintGraph) -> dict:
+    """Render blueprint.inputs from global_inputs as a dict."""
+    inputs = {}
 
     for name, value in graph.global_inputs.items():
         input_def = {
-            "name": name,
             "type": _infer_type(value) if value is not None else "string"
         }
 
-        # ISSUE 5 FIX: Only emit default if value is not None
+        # Only emit default if value is not None
         if value is not None:
             input_def["default"] = value
         # If value is None, this is a required input with no default
 
-        inputs.append(input_def)
+        inputs[name] = input_def
 
     return inputs
 
@@ -116,8 +115,10 @@ def _render_steps(steps: dict) -> dict:
         # Add all fields from step_data
         for key, value in step_data.items():
             if key == "variables":
-                # Render variables as list
-                rendered_step["variables"] = _render_variables(value)
+                # Render variables as list, but only if non-empty
+                rendered_vars = _render_variables(value)
+                if rendered_vars:  # Only include if there are variables
+                    rendered_step["variables"] = rendered_vars
             else:
                 rendered_step[key] = value
 
