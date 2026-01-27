@@ -33,6 +33,8 @@ class ConversationEngine:
         self.current_question_index: int = 0
         self.yaml_output: Optional[str] = None
         self.current_entity_group: List[MissingRequirement] = []  # For compound questions
+        self.component_to_entity_id: dict = {}  # Maps component name → entity ID
+        self.entity_counter: int = 0  # Counter for generating unique entity IDs
 
     def process_user_input(self, user_text: str) -> str:
         """
@@ -56,9 +58,97 @@ class ConversationEngine:
             return "Blueprint is complete and valid."
 
         elif self.state == "YAML_RENDERED":
-            return f"YAML rendered successfully:\n\n{self.yaml_output}"
+            # INCREMENTAL ENTITY DISCOVERY: Allow extending complete blueprints
+            from llm_interface import detect_new_entities
+            existing_ids = list(self.graph.entities.keys())
+            new_entity_detection = detect_new_entities(user_text, existing_ids)
+
+            if new_entity_detection.get("new_entities"):
+                # User wants to extend the blueprint
+                return self._handle_entity_expansion(new_entity_detection["new_entities"])
+            else:
+                # Just showing YAML again
+                return f"YAML rendered successfully:\n\n{self.yaml_output}"
 
         return "Unknown state"
+
+    def _handle_entity_expansion(self, new_entities: list) -> str:
+        """
+        Handle adding new entities mid-conversation (incremental discovery).
+
+        Args:
+            new_entities: List of entity data dicts from entity detection
+
+        Returns:
+            System response acknowledging addition and asking for configuration
+        """
+        added_entity_names = []
+
+        for entity_data in new_entities:
+            # Generate unique entity ID from component/template name
+            entity_id = self._generate_entity_id(entity_data)
+
+            # Skip if entity already exists (conservative)
+            if entity_id in self.graph.entities:
+                continue
+
+            # Resolve dependencies from component names to entity IDs
+            dependency_names = entity_data.get("dependency_names", [])
+            resolved_dependencies = [
+                self.component_to_entity_id.get(dep_name, dep_name)
+                for dep_name in dependency_names
+            ]
+
+            # Create new entity
+            from models import Entity
+            entity = Entity(
+                id=entity_id,
+                backend_type=entity_data.get("backend_type"),
+                inputs={},
+                values={},
+                steps={},
+                dependencies=resolved_dependencies
+            )
+
+            # Initialize based on backend type
+            if entity.backend_type == "HarnessIACM":
+                template_name = entity_data.get("template")
+                if template_name:
+                    entity.steps["create"] = {
+                        "template": template_name,
+                        "version": "v1"
+                    }
+                    # Store mapping: template name → entity ID (for dependency resolution)
+                    self.component_to_entity_id[template_name] = entity_id
+                    added_entity_names.append(f"IaCM entity '{template_name}'")
+                else:
+                    added_entity_names.append(f"IaCM entity")
+            elif entity.backend_type == "Catalog":
+                component_name = entity_data.get("component")
+                if component_name:
+                    entity.values["identifier"] = component_name
+                    # Store mapping: component name → entity ID
+                    self.component_to_entity_id[component_name] = entity_id
+                    added_entity_names.append(f"Catalog service '{component_name}'")
+                else:
+                    added_entity_names.append(f"Catalog service")
+
+            # Add to graph (graph only grows, never shrinks)
+            self.graph.entities[entity_id] = entity
+
+        # Acknowledge entity addition
+        if added_entity_names:
+            acknowledgment = f"Got it — I've added {', '.join(added_entity_names)} to the blueprint.\n\n"
+
+            # Reset state to allow configuration
+            self.state = "GRAPH_CREATED"
+
+            # Re-validate with expanded graph
+            response = self._validate_and_continue()
+
+            return acknowledgment + response
+        else:
+            return "No new entities detected."
 
     def _handle_start(self, user_text: str) -> str:
         """Handle START state: parse intent and create initial graph."""
@@ -83,12 +173,16 @@ class ConversationEngine:
         if self.current_question_index >= len(self.missing_requirements):
             return "No pending questions"
 
+        # STEP 1: Parse and apply answers to current questions (if any)
+        answers_applied = False
+
         # UX IMPROVEMENT: Try parsing as compound answer first
         if self.current_entity_group:
             from llm_interface import parse_compound_answer
             entity = self.graph.entities.get(self.current_entity_group[0].entity_id) if self.current_entity_group else None
 
-            compound_parsed = parse_compound_answer(user_text, self.current_entity_group, entity)
+            # Pass graph for existing variable context
+            compound_parsed = parse_compound_answer(user_text, self.current_entity_group, entity, self.graph)
             print(f"compound answer parsed={compound_parsed}")
 
             if compound_parsed:
@@ -111,40 +205,63 @@ class ConversationEngine:
 
                 # Clear current entity group
                 self.current_entity_group = []
-
-                # Re-validate to see what's still missing
-                return self._validate_and_continue()
+                answers_applied = True
 
         # Fallback: Parse as single answer (old behavior)
-        current_req = self.missing_requirements[self.current_question_index]
+        if not answers_applied:
+            current_req = self.missing_requirements[self.current_question_index]
 
-        # Parse user answer using LLM
-        update = parse_answer(user_text, current_req)
-        print(f"single answer parsed={update}")
+            # Parse user answer using LLM
+            update = parse_answer(user_text, current_req)
+            print(f"single answer parsed={update}")
 
-        # Check for error in parsing
-        if update.get("error"):
-            print(f"Parse error: {update['error']}")
-            # Ask the question again
-            return formulate_question(current_req, self.graph.entities.get(current_req.entity_id))
+            # Check for error in parsing
+            if update.get("error"):
+                print(f"Parse error: {update['error']}")
+                # Ask the question again
+                return formulate_question(current_req, self.graph.entities.get(current_req.entity_id))
 
-        # Apply update to graph
-        self._apply_update(update)
+            # Apply update to graph
+            self._apply_update(update)
 
-        # Move to next question
-        self.current_question_index += 1
+            # Move to next question
+            self.current_question_index += 1
+            answers_applied = True
 
-        # Check if all questions answered
-        if self.current_question_index >= len(self.missing_requirements):
-            # Re-validate with updates
-            return self._validate_and_continue()
+        # STEP 2: Check if user is also introducing new entities (incremental discovery)
+        from llm_interface import detect_new_entities
+        existing_ids = list(self.graph.entities.keys())
+        new_entity_detection = detect_new_entities(user_text, existing_ids)
+
+        if new_entity_detection.get("new_entities"):
+            # User provided answers AND introduced new entities
+            # Use _handle_entity_expansion to properly generate IDs and maintain mappings
+            new_entities = new_entity_detection["new_entities"]
+            return self._handle_entity_expansion(new_entities)
+
+        # STEP 3: No new entities - continue normal flow
+        if answers_applied:
+            # IMPORTANT: If compound answer was applied (entity group was cleared),
+            # we must re-validate to get fresh requirements and group them properly.
+            # Only use question index for single-answer flow.
+            if not self.current_entity_group:  # Compound answer applied
+                # Re-validate to get next entity's requirements
+                return self._validate_and_continue()
+            else:
+                # Single answer applied - check if more questions remain
+                if self.current_question_index >= len(self.missing_requirements):
+                    # All questions answered - re-validate
+                    return self._validate_and_continue()
+                else:
+                    # Ask next question
+                    next_req = self.missing_requirements[self.current_question_index]
+                    # Get entity for domain context
+                    entity = self.graph.entities.get(next_req.entity_id) if self.graph else None
+                    question = formulate_question(next_req, entity)
+                    return question
         else:
-            # Ask next question
-            next_req = self.missing_requirements[self.current_question_index]
-            # Get entity for domain context
-            entity = self.graph.entities.get(next_req.entity_id) if self.graph else None
-            question = formulate_question(next_req, entity)
-            return question
+            # No answers parsed, no entities added
+            return "Could not understand your response. Please try again."
 
     def _validate_and_continue(self) -> str:
         """Validate graph and continue state machine."""
@@ -197,32 +314,73 @@ class ConversationEngine:
         graph = BlueprintGraph()
 
         for entity_data in intent.get("entities", []):
+            # Generate unique entity ID from component/template name
+            entity_id = self._generate_entity_id(entity_data)
+
+            # Resolve dependencies from component names to entity IDs
+            dependency_names = entity_data.get("dependency_names", [])
+            resolved_dependencies = [
+                self.component_to_entity_id.get(dep_name, dep_name)
+                for dep_name in dependency_names
+            ]
+
             entity = Entity(
-                id=entity_data["id"],
+                id=entity_id,
                 backend_type=entity_data["backend_type"],
                 inputs=entity_data.get("inputs", {}),
                 values={},
                 steps={},
-                dependencies=entity_data.get("dependencies", [])
+                dependencies=resolved_dependencies
             )
 
             # Set up initial values based on backend type
             if entity.backend_type == "HarnessIACM":
                 # Initialize create step if template specified
                 if "template" in entity_data:
+                    template_name = entity_data["template"]
                     entity.steps["create"] = {
-                        "template": entity_data["template"],
+                        "template": template_name,
                         "version": "v1"  # Default version
                     }
+                    # Store mapping: template name → entity ID (for dependency resolution)
+                    self.component_to_entity_id[template_name] = entity_id
 
             elif entity.backend_type == "Catalog":
                 # Initialize identifier from component if specified
                 if "component" in entity_data:
-                    entity.values["identifier"] = entity_data["component"]
+                    component_name = entity_data["component"]
+                    entity.values["identifier"] = component_name
+                    # Store mapping: component name → entity ID
+                    self.component_to_entity_id[component_name] = entity_id
 
-            graph.entities[entity.id] = entity
+            graph.entities[entity_id] = entity
 
         return graph
+
+    def _generate_entity_id(self, entity_data: dict) -> str:
+        """
+        Generate unique entity ID from component/template name.
+
+        Format: {sanitized_name}_e{counter}
+        Examples: frontend_e1, ssemdemobackend_e2, payment_backend_e3, ns_e1
+        """
+        if entity_data["backend_type"] == "Catalog":
+            # Use component name for Catalog entities
+            base_name = entity_data.get("component", "service")
+        elif entity_data["backend_type"] == "HarnessIACM":
+            # Use template name for IaCM entities
+            base_name = entity_data.get("template", "iacm")
+        else:
+            base_name = "entity"
+
+        # Sanitize name: replace hyphens/spaces with underscores, lowercase
+        sanitized = base_name.lower().replace("-", "_").replace(" ", "_")
+
+        # Increment counter and generate ID
+        self.entity_counter += 1
+        entity_id = f"{sanitized}_e{self.entity_counter}"
+
+        return entity_id
 
     def _apply_update(self, update: dict):
         """Apply a structured update to the graph."""
@@ -235,6 +393,24 @@ class ConversationEngine:
             return
 
         entity = self.graph.entities[entity_id]
+
+        # Handle variable_reference: user referenced an existing blueprint input
+        if classification == "variable_reference":
+            # Value is already in format "env.config.name" - wrap it in variable expression
+            var_expr = f"${{{{{value}}}}}"
+
+            # Set entity value to this variable reference
+            if path.startswith("values."):
+                self._set_nested_value(entity.values, path.replace("values.", ""), var_expr)
+                return  # Return after handling
+            elif path.startswith("config."):
+                config_key = path.replace("config.", "")
+                entity.inputs[config_key] = var_expr
+                return  # Return after handling
+            # For steps.* paths, update the value to be the expression and continue
+            else:
+                value = var_expr
+                classification = "literal"  # Treat as literal from here on
 
         # ISSUE 3, 4 FIX: Handle input classification
         if classification == "blueprint_input":

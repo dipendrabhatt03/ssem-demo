@@ -17,45 +17,21 @@ from resource_db import get_infrastructure, get_iacm_template
 
 def auto_wire_dependencies(graph: BlueprintGraph) -> BlueprintGraph:
     """
-    Automatically wire dependency outputs to infrastructure bindings.
+    Auto-wiring has been DISABLED.
 
-    For each Catalog entity:
-    - Check if infrastructure requires specific bindings (e.g., "namespace")
-    - Search entity dependencies for compatible outputs
-    - Auto-inject variable expression if found
+    Infrastructure bindings (like 'namespace') are regular user inputs,
+    NOT special dependency connections to IaCM backends.
 
-    Returns updated graph.
+    These bindings should be treated like any other required field:
+    - System validates they exist (via contracts)
+    - System asks user for values
+    - User provides values (literals or blueprint inputs)
+
+    No automatic wiring between IaCM outputs and Catalog infrastructure bindings.
+
+    Returns graph unchanged.
     """
-    for entity_id, entity in graph.entities.items():
-        if entity.backend_type != "Catalog":
-            continue
-
-        # Get environment and infrastructure info
-        env_id = _get_nested_value(entity.values, "environment.identifier")
-        infra_id = _get_nested_value(entity.values, "environment.infra.identifier")
-
-        if not env_id or not infra_id:
-            continue
-
-        infra = get_infrastructure(env_id, infra_id)
-        if not infra:
-            continue
-
-        # Check required bindings
-        for required_binding in infra.get("required_bindings", []):
-            # ISSUE 7 FIX: Bindings go directly under infra, not under bindings object
-            binding_path = f"environment.infra.{required_binding}"
-
-            # Check if binding already exists
-            if _get_nested_value(entity.values, binding_path):
-                continue
-
-            # Try to auto-wire from dependencies
-            wired_expr = _find_compatible_output(entity, graph, required_binding)
-            if wired_expr:
-                # Auto-inject the variable expression
-                _set_nested_value(entity.values, binding_path, wired_expr)
-
+    # NO AUTO-WIRING - infrastructure bindings are just regular inputs
     return graph
 
 

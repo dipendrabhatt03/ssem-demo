@@ -64,7 +64,6 @@ def _render_entities(graph: BlueprintGraph) -> list:
     for entity_id, entity in graph.entities.items():
         entity_dict = {
             "id": entity.id,
-            "type": entity.backend_type,
             "backend": _render_backend(entity),
         }
 
@@ -92,7 +91,9 @@ def _render_entities(graph: BlueprintGraph) -> list:
 
 def _render_backend(entity) -> dict:
     """Render backend section for an entity."""
-    backend = {}
+    backend = {
+        "type": entity.backend_type
+    }
 
     # Add values
     if entity.values:

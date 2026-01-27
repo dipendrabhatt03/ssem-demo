@@ -96,6 +96,94 @@ def _extract_json_from_markdown(text: str) -> str:
     return text
 
 
+def detect_new_entities(user_text: str, existing_entity_ids: list) -> Dict[str, Any]:
+    """
+    Detect if user is introducing NEW entities during conversation (incremental discovery).
+
+    This is a CONSERVATIVE check - only detects explicitly stated new entities.
+    Used during NEEDS_INPUT state to allow blueprint expansion mid-conversation.
+
+    Args:
+        user_text: User's message during conversation
+        existing_entity_ids: List of entity IDs already in the graph
+
+    Returns:
+        Dict with new entities (empty if none detected):
+        {
+            "new_entities": [
+                {"id": "...", "backend_type": "...", ...}
+            ]
+        }
+    """
+    client = _get_anthropic_client()
+
+    prompt = f"""Detect if the user is explicitly introducing NEW entities for a Harness Environment Blueprint.
+
+CRITICAL: Be CONSERVATIVE. Only detect if user EXPLICITLY mentions adding/creating/deploying something NEW.
+
+User's message: "{user_text}"
+Entities already in blueprint: {existing_entity_ids}
+
+Detection rules:
+1. ONLY detect if user explicitly says:
+   - "add [something]"
+   - "deploy [something]"
+   - "create [something]"
+   - "I also want [something]"
+   - "include [something]"
+
+2. Do NOT detect for:
+   - Answers to questions ("use DeployService", "dev-workspace")
+   - References to existing entities
+   - Vague language ("same as before", "default")
+
+3. Available entity types:
+   - HarnessIACM templates: TempNamespace (creates namespace)
+   - Catalog components: any service name mentioned by user
+
+4. Extract the actual component/service NAME from user input
+   - Example: "deploy ssemdemobackend service" → component: "ssemdemobackend"
+   - Example: "add payment-backend" → component: "payment-backend"
+   - DO NOT create entity IDs - system will generate them
+
+5. For dependencies, extract component NAMES mentioned by user
+   - Example: "depends on ssemdemobackend" → dependency_names: ["ssemdemobackend"]
+
+Examples:
+- "I also want to deploy ssemdemobackend service" → NEW entity: Catalog component "ssemdemobackend"
+- "add payment-backend depending on frontend" → NEW entity: Catalog component "payment-backend", dependency_names: ["frontend"]
+- "add another namespace" → NEW entity: HarnessIACM template TempNamespace
+- "use DeployService" → NO new entities (answering question)
+- "dev-workspace" → NO new entities (answering question)
+
+Return ONLY raw JSON (no markdown):
+{{
+  "new_entities": [
+    {{"backend_type": "HarnessIACM" or "Catalog", "template": "..." (IaCM only), "component": "component-name" (Catalog only), "dependency_names": ["comp1", "comp2"]}}
+  ]
+}}
+
+If NO new entities detected, return: {{"new_entities": []}}
+
+CRITICAL: Return valid JSON only."""
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-5@20250929",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        response_text = message.content[0].text.strip()
+        clean_json = _extract_json_from_markdown(response_text)
+        result = json.loads(clean_json)
+
+        return result if isinstance(result, dict) else {"new_entities": []}
+    except Exception as e:
+        print(f"Error detecting new entities: {e}")
+        return {"new_entities": []}
+
+
 def parse_intent(user_text: str) -> Dict[str, Any]:
     """
     Parse user natural language input into structured intent using Claude.
@@ -136,10 +224,11 @@ Extract:
 2. Explicit bindings if mentioned (environment, workspace, infrastructure, pipelines)
 
 Rules:
-- Assign short IDs to entities (e.g., "ns" for namespace, "frontend" for frontend service)
+- DO NOT assign entity IDs - the system will generate unique IDs automatically
+- Extract the actual component/service NAME from user input (e.g., "ssemdemobackend", "payment-backend", "frontend")
 - If user mentions a namespace, use backend_type: "HarnessIACM" with template: "TempNamespace"
-- If user mentions a service/component, use backend_type: "Catalog" with component name
-- If a Catalog entity needs a namespace, add the namespace entity ID to its dependencies array
+- If user mentions a service/component, use backend_type: "Catalog" with the extracted component NAME
+- For dependencies, use the component NAME that user mentioned (system will resolve to entity ID)
 - If user explicitly mentions environment/workspace/infrastructure/pipelines, include in bindings
 - Only include entities and bindings explicitly mentioned by the user
 
@@ -147,20 +236,19 @@ CRITICAL: Return ONLY raw JSON. Do NOT wrap in markdown code blocks. Do NOT use 
 {{
   "entities": [
     {{
-      "id": "short-id",
       "backend_type": "HarnessIACM" or "Catalog",
       "template": "template-name" (only for IaCM),
-      "component": "component-name" (only for Catalog),
-      "dependencies": ["dep-id1", "dep-id2"],
+      "component": "component-name" (only for Catalog - extract actual name from user),
+      "dependency_names": ["component-name1", "component-name2"] (use component NAMES, not IDs),
       "inputs": {{}}
     }}
   ],
   "bindings": {{
-    "entity_id.path": "value"
+    "component_name.path": "value"
     (Examples:
-      - "frontend.environment.identifier": "mycluster" (environment ID)
-      - "frontend.environment.infra.identifier": "ssemteamdelegate" (infrastructure ID - NOTE: nested under environment)
-      - "ns.workspace": "dev-workspace" (workspace name)
+      - "frontend.environment.identifier": "mycluster" (for frontend component)
+      - "frontend.environment.infra.identifier": "ssemteamdelegate" (for frontend component)
+      - Use actual component names from user input, system will map to entity IDs
     )
   }}
 }}
@@ -426,7 +514,7 @@ Return ONLY the question text."""
         return f"Please configure {entity_type} (ID: {entity_id}):\n{items}"
 
 
-def parse_compound_answer(user_text: str, requirements: list, entity=None) -> Dict[str, Any]:
+def parse_compound_answer(user_text: str, requirements: list, entity=None, graph=None) -> Dict[str, Any]:
     """
     Parse a multi-field answer for compound questions.
 
@@ -434,6 +522,7 @@ def parse_compound_answer(user_text: str, requirements: list, entity=None) -> Di
         user_text: User's answer (may address multiple fields)
         requirements: List of MissingRequirement objects being addressed
         entity: Optional Entity object for context
+        graph: Optional BlueprintGraph for existing variables context
 
     Returns:
         Dict mapping path -> parsed value/classification
@@ -454,11 +543,27 @@ def parse_compound_answer(user_text: str, requirements: list, entity=None) -> Di
             "options": req.options
         })
 
+    # Get existing blueprint inputs for variable reference context
+    existing_inputs = []
+    if graph and hasattr(graph, 'global_inputs'):
+        existing_inputs = list(graph.global_inputs.keys())
+
+    existing_inputs_info = ""
+    if existing_inputs:
+        existing_inputs_info = f"""
+Existing blueprint inputs (already configured):
+{json.dumps(existing_inputs, indent=2)}
+
+IMPORTANT: If user references an existing blueprint input (e.g., "use the name variable", "use name from blueprint"),
+output it as a variable reference with classification "variable_reference" and value in format "env.config.<input_name>".
+Example: User says "use the name variable" → {{"value": "env.config.name", "classification": "variable_reference"}}
+"""
+
     prompt = f"""Parse a multi-field answer for configuring a Harness Environment Blueprint entity.
 
 Expected fields (numbered):
 {json.dumps([{"number": i+1, **schema} for i, schema in enumerate(fields_schema)], indent=2)}
-
+{existing_inputs_info}
 User's answer: "{user_text}"
 
 CRITICAL RULES:
@@ -468,22 +573,25 @@ CRITICAL RULES:
 4. Skip any fields not explicitly addressed by the user
 
 For each field the user explicitly addresses:
-1. The value (if user provides specific value) OR field name if requesting blueprint input
+1. The value (if user provides specific value) OR variable reference OR field name if requesting blueprint input
 2. The classification:
+   - "variable_reference" if user references an existing blueprint input (e.g., "use name", "use the workspace variable")
    - "blueprint_input" if user says "user input", "configurable", "runtime", "take it as input", etc.
    - "literal" if user provides a specific value
 
-IMPORTANT: When classification is "blueprint_input" and user doesn't specify a parameter name,
-set value to the field name from the path (last segment).
+IMPORTANT:
+- When classification is "variable_reference", set value to "env.config.<input_name>" (just the path, no ${{{{...}}}})
+- When classification is "blueprint_input" and user doesn't specify a parameter name, set value to the field name from the path (last segment)
 
 Examples:
 - Question has 3 fields, user says "1. take it from user input" → ONLY answer field 1, skip 2 and 3
 - Question has 3 fields, user says "use DeployService for apply and UninstallService for destroy" → answer fields matching "apply" and "destroy"
 - Question has 1 field, user says "take as user input" → answer that 1 field
+- Question asks for namespace, user says "use the name variable" → {{"value": "env.config.name", "classification": "variable_reference"}}
 
 Return ONLY raw JSON (no markdown, no code blocks):
 {{
-  "field_path": {{"value": "extracted_value_or_field_name", "classification": "blueprint_input" or "literal"}},
+  "field_path": {{"value": "extracted_value_or_variable_path", "classification": "variable_reference" or "blueprint_input" or "literal"}},
   ...
 }}
 

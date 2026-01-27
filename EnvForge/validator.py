@@ -342,15 +342,37 @@ def _validate_catalog_entity(entity_id: str, entity, graph: BlueprintGraph) -> L
     - We do NOT validate whether infrastructure exists in backend
     - We do NOT validate environment-infrastructure pairing
 
+    We DO validate:
+    - Required infrastructure bindings are present (structural check)
+
     Those are runtime concerns for the Harness backend.
     This system is a YAML builder, not a semantic validator.
     """
     missing = []
 
-    # No semantic validation needed for Catalog entities
-    # Contract validation already ensures required fields are present
-    # Dependency resolver handles binding auto-wiring
-    # Backend will validate existence at execution time
+    # Validate infrastructure bindings (if infrastructure is specified)
+    env_id = _get_nested_value(entity.values, "environment.identifier")
+    infra_id = _get_nested_value(entity.values, "environment.infra.identifier")
+
+    if env_id and infra_id:
+        # Check if infrastructure metadata exists in our knowledge base
+        from resource_db import get_infrastructure
+        infra = get_infrastructure(env_id, infra_id)
+
+        # If infrastructure is in our knowledge base, validate required bindings
+        # If NOT in knowledge base, accept as-is (user knows what they're doing)
+        if infra:
+            required_bindings = infra.get("required_bindings", [])
+            for binding_name in required_bindings:
+                binding_path = f"environment.infra.{binding_name}"
+                binding_value = _get_nested_value(entity.values, binding_path)
+
+                if not binding_value:
+                    missing.append(MissingRequirement(
+                        entity_id=entity_id,
+                        path=f"values.{binding_path}",
+                        reason=f"Infrastructure '{infra_id}' requires binding '{binding_name}'"
+                    ))
 
     return missing
 
