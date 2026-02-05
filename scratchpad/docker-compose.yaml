@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: local-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      # IMPORTANT: allows Prometheus in Docker to reach your laptop's localhost
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: local-grafana
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"

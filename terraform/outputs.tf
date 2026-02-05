@@ -71,6 +71,7 @@ output "harness_cd_values" {
 
 output "deployment_info" {
   description = "Quick reference information for deploying applications via Harness CD"
+  sensitive   = true
   value = <<-EOT
 
     ============================================

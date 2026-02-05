@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "po-server-local"
+
+    static_configs:
+      - targets:
+          # Docker can't see your laptop's localhost directly, so we use this:
+          - "host.docker.internal:3507"
+
+    metrics_path: "/metrics"
